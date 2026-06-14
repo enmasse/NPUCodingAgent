@@ -30,9 +30,11 @@ The app uses the documented Windows packages:
 ### 2. Choose a model alias
 
 Optionally set this environment variable before running:
-- `FOUNDRY_LOCAL_MODEL=phi-3.5-mini`
+- `FOUNDRY_LOCAL_MODEL=phi-3-mini-128k-instruct-qnn-npu:4`
 
-By default the app uses `phi-3.5-mini`.
+By default the app uses `phi-3-mini-128k-instruct-qnn-npu:4`.
+
+You can also inspect the local Foundry catalog at runtime with `/models` and switch to any selectable alias or variant ID with `/use <model>`.
 
 ### 3. Run the app
 
@@ -56,7 +58,8 @@ dotnet run --project NPUCodingAgent
 | `/read <file>` | Read and display a specific file |
 | `/status` | Show the active model and local runtime details |
 | `/ping` | Run a quick model smoke test |
-| `/models` | List available Foundry Local model aliases |
+| `/models` | List selectable Foundry Local aliases and variant IDs |
+| `/use <model>` | Switch to a specific Foundry Local model alias or ID |
 | `/edit <file>` | Edit a file with AI assistance |
 | `help` | Show help message |
 | `exit` | Exit the application |
@@ -108,8 +111,7 @@ NPUCodingAgent/
 
 ### Key Components
 
-- **LocalModelService**: Starts Foundry Local, lists available aliases, loads the selected model, and talks to the local model through the SDK runtime
-- **LocalModelService**: Starts Foundry Local, lists available aliases, loads the selected model, surfaces runtime metadata, and talks to the local model through the SDK runtime
+- **LocalModelService**: Starts Foundry Local, enumerates selectable aliases and variant IDs from the catalog, loads the selected model, surfaces runtime metadata, and talks to the local model through the SDK runtime
 - **WorkspaceService**: Safely enumerates and reads files with extension filtering and size limits
 - **FileEditService**: Handles file modifications with automatic backup creation
 - **Program**: Orchestrates the interactive loop and command dispatching
@@ -136,7 +138,8 @@ The workspace service scans for these file types:
 - Foundry Local may expose a local web endpoint at runtime, or it may use the in-process SDK client.
 - Use `/status` to see the active model and runtime details.
 - Use `/ping` for a quick connectivity check against the active model.
-- Use `/models` to inspect available model aliases.
+- Use `/models` to inspect every selectable alias and variant ID in the local catalog.
+- Use `/use <model>` to switch to a specific Foundry Local alias or variant ID without restarting the app.
 
 ### NPU Detection
 
@@ -164,7 +167,7 @@ The workspace service scans for these file types:
 ```
 Error initializing Foundry Local
 ```
-**Solution**: Verify the configured model alias exists in the Foundry Local catalog and allow the first-run download to complete.
+**Solution**: Verify the configured model alias or variant ID exists in the Foundry Local catalog, inspect `/models`, and allow the first-run download to complete.
 
 ### NPU Not Available
 The application will fall back to GPU or CPU if NPU is not available. Performance may vary.

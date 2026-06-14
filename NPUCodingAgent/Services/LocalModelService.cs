@@ -1,7 +1,10 @@
 using System.ClientModel;
 using System.Collections;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging.Abstractions;
+
+[assembly: InternalsVisibleTo("NPUCodingAgent.Tests")]
 
 namespace NPUCodingAgent.Services;
 
@@ -24,12 +27,16 @@ public sealed class LocalModelService : IDisposable
     private ModelRuntimeInfo? _runtimeInfo;
     private bool _initialized;
 
-    public LocalModelService()
+    public LocalModelService(string? modelAlias = null)
     {
-        _modelAlias = Environment.GetEnvironmentVariable("FOUNDRY_LOCAL_MODEL")?.Trim() ?? DefaultModelAlias;
+        _modelAlias = string.IsNullOrWhiteSpace(modelAlias)
+            ? Environment.GetEnvironmentVariable("FOUNDRY_LOCAL_MODEL")?.Trim() ?? DefaultModelAlias
+            : modelAlias.Trim();
     }
 
     public string Endpoint => _endpoint?.ToString() ?? "In-process SDK client";
+
+    public string RequestedModelSelection => _modelAlias;
 
     public string ModelName => _modelId ?? _modelAlias;
 
@@ -125,19 +132,9 @@ public sealed class LocalModelService : IDisposable
             ?? throw new InvalidOperationException("Foundry Local did not provide a model catalog.");
 
         var models = await InvokeTaskResultAsync(_catalog, "ListModelsAsync") as IEnumerable;
-        if (models is null)
-        {
-            return Array.Empty<string>();
-        }
-
-        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var model in models.Cast<object>())
-        {
-            AddName(names, GetMemberValue(model, "Alias")?.ToString());
-            AddName(names, GetMemberValue(model, "Id")?.ToString());
-        }
-
-        return names.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray();
+        return models is null
+            ? Array.Empty<string>()
+            : CollectSelectableModelNames(models.Cast<object>());
     }
 
     public void Dispose()
@@ -291,22 +288,21 @@ public sealed class LocalModelService : IDisposable
         return null;
     }
 
-    private static bool MatchesModelSelection(object model, string modelSelection)
+    internal static bool MatchesModelSelection(object model, string modelSelection)
     {
-        if (string.Equals(GetMemberValue(model, "Alias")?.ToString(), modelSelection, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(GetMemberValue(model, "Id")?.ToString(), modelSelection, StringComparison.OrdinalIgnoreCase))
+        return MatchesModelSelection(model, modelSelection, new HashSet<object>(ReferenceEqualityComparer.Instance));
+    }
+
+    internal static IReadOnlyList<string> CollectSelectableModelNames(IEnumerable<object> models)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        foreach (var model in models)
         {
-            return true;
+            CollectSelectableModelNames(names, model, visited);
         }
 
-        if (GetMemberValue(model, "Variants") is not IEnumerable variants)
-        {
-            return false;
-        }
-
-        return variants.Cast<object>().Any(variant =>
-            string.Equals(GetMemberValue(variant, "Alias")?.ToString(), modelSelection, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(GetMemberValue(variant, "Id")?.ToString(), modelSelection, StringComparison.OrdinalIgnoreCase));
+        return names.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
     private static async Task<bool> TryInvokeTaskAsync(object target, string methodName, params object?[] preferredValues)
@@ -488,6 +484,69 @@ public sealed class LocalModelService : IDisposable
         }
 
         return null;
+    }
+
+    private static bool MatchesModelSelection(object? candidate, string modelSelection, ISet<object> visited)
+    {
+        if (candidate is null)
+        {
+            return false;
+        }
+
+        if (candidate is string value)
+        {
+            return string.Equals(value, modelSelection, StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (!visited.Add(candidate))
+        {
+            return false;
+        }
+
+        if (string.Equals(GetMemberValue(candidate, "Alias")?.ToString(), modelSelection, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(GetMemberValue(candidate, "Id")?.ToString(), modelSelection, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (GetMemberValue(candidate, "Variants") is not IEnumerable variants)
+        {
+            return false;
+        }
+
+        return variants.Cast<object?>().Any(variant => MatchesModelSelection(variant, modelSelection, visited));
+    }
+
+    private static void CollectSelectableModelNames(ISet<string> names, object? candidate, ISet<object> visited)
+    {
+        if (candidate is null)
+        {
+            return;
+        }
+
+        if (candidate is string value)
+        {
+            AddName(names, value);
+            return;
+        }
+
+        if (!visited.Add(candidate))
+        {
+            return;
+        }
+
+        AddName(names, GetMemberValue(candidate, "Alias")?.ToString());
+        AddName(names, GetMemberValue(candidate, "Id")?.ToString());
+
+        if (GetMemberValue(candidate, "Variants") is not IEnumerable variants)
+        {
+            return;
+        }
+
+        foreach (var variant in variants.Cast<object?>())
+        {
+            CollectSelectableModelNames(names, variant, visited);
+        }
     }
 
     private static void AddName(ISet<string> names, string? value)
