@@ -7,6 +7,7 @@ namespace NPUCodingAgent.Services;
 
 public sealed class LocalModelService : IDisposable
 {
+    private const string DefaultModelAlias = "phi-3-mini-128k-instruct-qnn-npu:4";
     private const string SystemPrompt = "You are a helpful coding assistant. Provide clear, concise answers about code and programming.";
     private const string FoundryAssemblyName = "Microsoft.AI.Foundry.Local.WinML";
     private const string FoundryManagerTypeName = "Microsoft.AI.Foundry.Local.FoundryLocalManager";
@@ -25,7 +26,7 @@ public sealed class LocalModelService : IDisposable
 
     public LocalModelService()
     {
-        _modelAlias = Environment.GetEnvironmentVariable("FOUNDRY_LOCAL_MODEL")?.Trim() ?? "phi-3.5-mini";
+        _modelAlias = Environment.GetEnvironmentVariable("FOUNDRY_LOCAL_MODEL")?.Trim() ?? DefaultModelAlias;
     }
 
     public string Endpoint => _endpoint?.ToString() ?? "In-process SDK client";
@@ -40,13 +41,13 @@ public sealed class LocalModelService : IDisposable
         }
 
         _manager = await EnsureManagerAsync();
-        await InvokeTaskAsync(_manager, "EnsureEpsDownloadedAsync");
+        await EnsureExecutionProvidersAsync(_manager);
 
         _catalog ??= await InvokeTaskResultAsync(_manager, "GetCatalogAsync")
             ?? throw new InvalidOperationException("Foundry Local did not provide a model catalog.");
 
-        _model = await InvokeTaskResultAsync(_catalog, "GetModelAsync", _modelAlias)
-            ?? throw new InvalidOperationException($"Model alias '{_modelAlias}' was not found in the Foundry Local catalog.");
+        _model = await ResolveModelAsync(_catalog, _modelAlias)
+            ?? throw new InvalidOperationException($"Model selection '{_modelAlias}' was not found in the Foundry Local catalog.");
 
         _modelId = GetMemberValue(_model, "Id")?.ToString() ?? _modelAlias;
 
@@ -250,12 +251,113 @@ public sealed class LocalModelService : IDisposable
         return Activator.CreateInstance(parameterType);
     }
 
+    private static async Task EnsureExecutionProvidersAsync(object manager)
+    {
+        if (await TryInvokeTaskAsync(manager, "DownloadAndRegisterEpsAsync"))
+        {
+            return;
+        }
+
+        await TryInvokeTaskAsync(manager, "EnsureEpsDownloadedAsync");
+    }
+
+    private static async Task<object?> ResolveModelAsync(object catalog, string modelSelection)
+    {
+        var model = await TryInvokeTaskResultAsync(catalog, "GetModelAsync", modelSelection);
+        if (model is not null)
+        {
+            return model;
+        }
+
+        model = await TryInvokeTaskResultAsync(catalog, "GetModelVariantAsync", modelSelection);
+        if (model is not null)
+        {
+            return model;
+        }
+
+        if (await TryInvokeTaskResultAsync(catalog, "ListModelsAsync") is not IEnumerable models)
+        {
+            return null;
+        }
+
+        foreach (var candidate in models.Cast<object>())
+        {
+            if (MatchesModelSelection(candidate, modelSelection))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool MatchesModelSelection(object model, string modelSelection)
+    {
+        if (string.Equals(GetMemberValue(model, "Alias")?.ToString(), modelSelection, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(GetMemberValue(model, "Id")?.ToString(), modelSelection, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (GetMemberValue(model, "Variants") is not IEnumerable variants)
+        {
+            return false;
+        }
+
+        return variants.Cast<object>().Any(variant =>
+            string.Equals(GetMemberValue(variant, "Alias")?.ToString(), modelSelection, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(GetMemberValue(variant, "Id")?.ToString(), modelSelection, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static async Task<bool> TryInvokeTaskAsync(object target, string methodName, params object?[] preferredValues)
+    {
+        var method = target
+            .GetType()
+            .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .Where(candidate => candidate.Name == methodName)
+            .OrderBy(candidate => candidate.GetParameters().Length)
+            .FirstOrDefault();
+
+        if (method is null)
+        {
+            return false;
+        }
+
+        var taskLike = method.Invoke(target, CreateMethodArguments(method, preferredValues))
+            ?? throw new InvalidOperationException($"Foundry Local method '{methodName}' returned no task.");
+
+        await AwaitTaskResultAsync(taskLike);
+        return true;
+    }
+
+    private static async Task<object?> TryInvokeTaskResultAsync(object target, string methodName, params object?[] preferredValues)
+    {
+        var method = target
+            .GetType()
+            .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .Where(candidate => candidate.Name == methodName)
+            .OrderBy(candidate => candidate.GetParameters().Length)
+            .FirstOrDefault();
+
+        if (method is null)
+        {
+            return null;
+        }
+
+        var taskLike = method.Invoke(target, CreateMethodArguments(method, preferredValues))
+            ?? throw new InvalidOperationException($"Foundry Local method '{methodName}' returned no task.");
+
+        return await AwaitTaskResultAsync(taskLike);
+    }
+
     private static async Task InvokeTaskAsync(object target, string methodName, params object?[] preferredValues)
     {
         var method = target
             .GetType()
             .GetMethods(BindingFlags.Public | BindingFlags.Instance)
-            .FirstOrDefault(candidate => candidate.Name == methodName)
+            .Where(candidate => candidate.Name == methodName)
+            .OrderBy(candidate => candidate.GetParameters().Length)
+            .FirstOrDefault()
             ?? throw new InvalidOperationException($"Foundry Local method '{methodName}' was not found on {target.GetType().FullName}.");
 
         var taskLike = method.Invoke(target, CreateMethodArguments(method, preferredValues))
@@ -269,7 +371,9 @@ public sealed class LocalModelService : IDisposable
         var method = target
             .GetType()
             .GetMethods(BindingFlags.Public | BindingFlags.Instance)
-            .FirstOrDefault(candidate => candidate.Name == methodName)
+            .Where(candidate => candidate.Name == methodName)
+            .OrderBy(candidate => candidate.GetParameters().Length)
+            .FirstOrDefault()
             ?? throw new InvalidOperationException($"Foundry Local method '{methodName}' was not found on {target.GetType().FullName}.");
 
         var taskLike = method.Invoke(target, CreateMethodArguments(method, preferredValues))

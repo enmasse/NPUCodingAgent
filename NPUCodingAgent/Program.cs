@@ -300,8 +300,8 @@ class Program
         Console.WriteLine();
         Console.WriteLine("  2. Ensure Foundry Local can access a supported local model catalog.");
         Console.WriteLine();
-        Console.WriteLine("  3. Optionally set the model alias before running:");
-        Console.WriteLine("     - FOUNDRY_LOCAL_MODEL=phi-3.5-mini");
+            Console.WriteLine("  3. Optionally set the model alias before running:");
+            Console.WriteLine("     - FOUNDRY_LOCAL_MODEL=phi-3-mini-128k-instruct-qnn-npu:4");
         Console.WriteLine();
         Console.WriteLine("  4. Run the app and let Foundry Local download or start the model on first use.");
         Console.WriteLine();
