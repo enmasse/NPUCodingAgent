@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="NPUCodingAgent/NPUCodingAgent.csproj" />
+  <Project Path="NPUCodingAgent.Tests/NPUCodingAgent.Tests.csproj" />
+</Solution>
