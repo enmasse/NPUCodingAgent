@@ -1,3 +1,4 @@
+using Betalgo.Ranul.OpenAI.ObjectModels.RequestModels;
 using NPUCodingAgent.Services;
 using Xunit;
 
@@ -37,7 +38,7 @@ public sealed class LocalModelServiceIntegrationTests
 
         var response = await service.GetResponseAsync(
         [
-            ("user", "Reply with a short sentence confirming the model connection is working.")
+            new ChatMessage("user", "Reply with a short sentence confirming the model connection is working.")
         ]);
 
         Assert.False(string.IsNullOrWhiteSpace(response));

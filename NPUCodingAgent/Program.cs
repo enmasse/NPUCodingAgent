@@ -1,4 +1,5 @@
-﻿using NPUCodingAgent.Services;
+﻿using Betalgo.Ranul.OpenAI.ObjectModels.RequestModels;
+using NPUCodingAgent.Services;
 
 namespace NPUCodingAgent;
 
@@ -41,7 +42,8 @@ class Program
             Console.WriteLine();
             PrintHelp();
 
-            var chatHistory = new List<(string role, string content)>();
+            //var chatHistory = new List<(string role, string content)>();
+            var chatHistory = new List<ChatMessage>();
 
             while (true)
             {
@@ -187,12 +189,12 @@ class Program
                     }
 
                     var context = $"Current file content:\n{currentContent}\n\nUser request: {changeRequest}\n\nProvide the complete updated file content.";
-                    chatHistory.Add(("user", context));
+                    chatHistory.Add(new ChatMessage("user", context));
 
                     try
                     {
                         var response = await modelService.GetResponseAsync(chatHistory);
-                        chatHistory.Add(("assistant", response));
+                        chatHistory.Add(new ChatMessage("assistant", response));
                         PrintEditPreview(currentContent, response);
 
                         Console.Write("\nType 'apply' to save these changes, or anything else to cancel: ");
@@ -221,12 +223,12 @@ class Program
                     continue;
                 }
 
-                chatHistory.Add(("user", input));
+                chatHistory.Add(new ChatMessage("user", input));
 
                 try
                 {
                     var response = await modelService.GetResponseAsync(chatHistory);
-                    chatHistory.Add(("assistant", response));
+                    chatHistory.Add(new ChatMessage("assistant", response));
                     Console.WriteLine($"\nAssistant: {response}");
                 }
                 catch (Exception ex)

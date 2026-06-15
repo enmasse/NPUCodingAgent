@@ -1,38 +1,29 @@
-using System.ClientModel;
+using Betalgo.Ranul.OpenAI.ObjectModels.RequestModels;
+using Betalgo.Ranul.OpenAI.ObjectModels.ResponseModels;
+using Microsoft.AI.Foundry.Local;
+using Microsoft.Extensions.Logging;
 using System.Collections;
-using System.Reflection;
 using System.Runtime.CompilerServices;
-using Microsoft.Extensions.Logging.Abstractions;
 
 [assembly: InternalsVisibleTo("NPUCodingAgent.Tests")]
 
 namespace NPUCodingAgent.Services;
 
-public sealed class LocalModelService : IDisposable
+public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncDisposable
 {
     private const string DefaultModelAlias = "phi-3-mini-128k-instruct-qnn-npu:4";
-    private const string SystemPrompt = "You are a helpful coding assistant. Provide clear, concise answers about code and programming.";
-    private const string FoundryAssemblyName = "Microsoft.AI.Foundry.Local.WinML";
-    private const string FoundryManagerTypeName = "Microsoft.AI.Foundry.Local.FoundryLocalManager";
-    private const string FoundryConfigurationTypeName = "Microsoft.AI.Foundry.Local.Configuration";
-    private const string ChatMessageTypeName = "Betalgo.Ranul.OpenAI.ObjectModels.RequestModels.ChatMessage, Betalgo.Ranul.OpenAI";
 
-    private readonly string _modelAlias;
-    private object? _manager;
-    private object? _catalog;
-    private object? _model;
-    private object? _chatClient;
+    private readonly string _modelAlias = string.IsNullOrWhiteSpace(modelAlias)
+            ? Environment.GetEnvironmentVariable("FOUNDRY_LOCAL_MODEL")?.Trim() ?? DefaultModelAlias
+            : modelAlias.Trim();
+
+    private ICatalog? _catalog;
+    private IModel? _model;
+    private OpenAIChatClient? _chatClient;
     private string? _modelId;
     private Uri? _endpoint;
     private ModelRuntimeInfo? _runtimeInfo;
     private bool _initialized;
-
-    public LocalModelService(string? modelAlias = null)
-    {
-        _modelAlias = string.IsNullOrWhiteSpace(modelAlias)
-            ? Environment.GetEnvironmentVariable("FOUNDRY_LOCAL_MODEL")?.Trim() ?? DefaultModelAlias
-            : modelAlias.Trim();
-    }
 
     public string Endpoint => _endpoint?.ToString() ?? "In-process SDK client";
 
@@ -47,29 +38,60 @@ public sealed class LocalModelService : IDisposable
             return;
         }
 
-        _manager = await EnsureManagerAsync();
-        await EnsureExecutionProvidersAsync(_manager);
+        var config = new Configuration
+        {
+            AppName = "NPUCodingAgent",
+            LogLevel = Microsoft.AI.Foundry.Local.LogLevel.Information,
+        };
 
-        _catalog ??= await InvokeTaskResultAsync(_manager, "GetCatalogAsync")
-            ?? throw new InvalidOperationException("Foundry Local did not provide a model catalog.");
+        using var loggerFactory = LoggerFactory.Create(builder =>
+        {
+            builder.SetMinimumLevel(Microsoft.Extensions.Logging.LogLevel.Information);
+        });
+        var logger = loggerFactory.CreateLogger<Program>();
 
-        _model = await ResolveModelAsync(_catalog, _modelAlias)
-            ?? throw new InvalidOperationException($"Model selection '{_modelAlias}' was not found in the Foundry Local catalog.");
+        await FoundryLocalManager.CreateAsync(config, logger);
+        var manager = FoundryLocalManager.Instance;
 
-        _modelId = GetMemberValue(_model, "Id")?.ToString() ?? _modelAlias;
+        var eps = manager.DiscoverEps();
+        foreach (var ep in eps)
+        {
+            Console.WriteLine($"{ep.Name} — registered: {ep.IsRegistered}");
+        }
 
-        await InvokeTaskAsync(_model, "DownloadAsync");
-        await InvokeTaskAsync(_model, "LoadAsync");
+        // Download and register OpenVINOExecutionProvider
+        Console.WriteLine($"Registering execution provider: {eps[1].Name} ");
+        var result = await manager.DownloadAndRegisterEpsAsync([eps[1].Name]/*, (p, d) => Console.WriteLine(p)*/);
+        Console.WriteLine($"Status: {result.Status}");
 
-        _chatClient = await InvokeTaskResultAsync(_model, "GetChatClientAsync")
-            ?? throw new InvalidOperationException("Foundry Local did not provide a chat client for the selected model.");
+        _catalog = await manager.GetCatalogAsync() ?? throw new InvalidOperationException("Foundry Local did not provide a model catalog.");
+        var cachedModels = await _catalog.GetCachedModelsAsync();
+
+        var models = await _catalog.ListModelsAsync();
+        _model = await _catalog.GetModelAsync("phi-3-mini-4k") ?? throw new InvalidOperationException($"Model selection '{_modelAlias}' was not found in the Foundry Local catalog.");
+
+        _modelId = _model?.Id;
+
+        await _model.DownloadAsync((p) => Console.WriteLine($"Download progress: {p}%"));
+        try
+        {
+            Console.WriteLine("Loading model...");
+            await _model.LoadAsync();
+            Console.WriteLine("Model loaded.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex.Message);
+        }
+
+         _chatClient = await _model.GetChatClientAsync() ?? throw new InvalidOperationException("Foundry Local did not provide a chat client for the selected model.");
 
         _runtimeInfo = ReadRuntimeInfo(_model, _modelAlias, _modelId, _endpoint);
 
         try
         {
-            await InvokeTaskAsync(_manager, "StartWebServiceAsync");
-            _endpoint = GetManagerEndpoint(_manager);
+            await manager.StartWebServiceAsync();
+            _endpoint = GetManagerEndpoint(manager);
         }
         catch
         {
@@ -81,16 +103,19 @@ public sealed class LocalModelService : IDisposable
         _initialized = true;
     }
 
-    public async Task<string> GetResponseAsync(List<(string role, string content)> chatHistory)
+    public async Task<string> GetResponseAsync(List<ChatMessage> chatHistory)
     {
-        await InitializeAsync();
+        if (!FoundryLocalManager.IsInitialized)
+        {
+            throw new InvalidOperationException("Foundry Local manager is not initialized.");
+        }
 
         if (_chatClient is null)
         {
             throw new InvalidOperationException("Foundry Local chat client is not initialized.");
         }
 
-        var completion = await InvokeTaskResultAsync(_chatClient, "CompleteChatAsync", CreateChatMessages(chatHistory))
+        var completion = await _chatClient.CompleteChatAsync(chatHistory)
             ?? throw new InvalidOperationException("Foundry Local returned no completion response.");
 
         var response = ReadCompletionText(completion);
@@ -104,14 +129,22 @@ public sealed class LocalModelService : IDisposable
 
     public async Task<string> GetStatusAsync()
     {
-        await InitializeAsync();
+        if (!FoundryLocalManager.IsInitialized)
+        {
+            throw new InvalidOperationException("Foundry Local manager is not initialized.");
+        }
+
         var runtime = await GetRuntimeInfoAsync();
-        return $"Provider: Foundry Local SDK\nEndpoint: {runtime.Endpoint}\nModel alias: {runtime.ModelAlias}\nModel: {runtime.ModelId}\nAccelerator: {runtime.AcceleratorSummary}\nExecution provider: {runtime.ExecutionProvider}\nNPU: {(runtime.IsNpu ? "Detected" : "Not detected") }\nStatus: Ready";
+        return $"Provider: Foundry Local SDK\nEndpoint: {runtime.Endpoint}\nModel alias: {runtime.ModelAlias}\nModel: {runtime.ModelId}\nAccelerator: {runtime.AcceleratorSummary}\nExecution provider: {runtime.ExecutionProvider}\nNPU: {(runtime.IsNpu ? "Detected" : "Not detected")}\nStatus: Ready";
     }
 
     public async Task<ModelRuntimeInfo> GetRuntimeInfoAsync()
     {
-        await InitializeAsync();
+        if (!FoundryLocalManager.IsInitialized)
+        {
+            throw new InvalidOperationException("Foundry Local manager is not initialized.");
+        }
+
         return _runtimeInfo ?? ReadRuntimeInfo(_model, _modelAlias, _modelId, _endpoint);
     }
 
@@ -119,7 +152,7 @@ public sealed class LocalModelService : IDisposable
     {
         var response = await GetResponseAsync(
         [
-            ("user", "Reply with exactly: pong")
+            new ChatMessage("user", "Reply with exactly: pong")
         ]);
 
         return response;
@@ -127,165 +160,15 @@ public sealed class LocalModelService : IDisposable
 
     public async Task<IReadOnlyList<string>> ListAvailableModelsAsync()
     {
-        var manager = await EnsureManagerAsync();
-        _catalog ??= await InvokeTaskResultAsync(manager, "GetCatalogAsync")
-            ?? throw new InvalidOperationException("Foundry Local did not provide a model catalog.");
+        if (!FoundryLocalManager.IsInitialized)
+        {
+            throw new InvalidOperationException("Foundry Local manager is not initialized.");
+        }
 
-        var models = await InvokeTaskResultAsync(_catalog, "ListModelsAsync") as IEnumerable;
+        var models = await _catalog.ListModelsAsync();
         return models is null
-            ? Array.Empty<string>()
+            ? []
             : CollectSelectableModelNames(models.Cast<object>());
-    }
-
-    public void Dispose()
-    {
-        try
-        {
-            if (_model is not null)
-            {
-                InvokeTaskAsync(_model, "UnloadAsync").GetAwaiter().GetResult();
-            }
-
-            if (_manager is not null)
-            {
-                InvokeTaskAsync(_manager, "StopWebServiceAsync").GetAwaiter().GetResult();
-
-                if (_manager is IDisposable disposable)
-                {
-                    disposable.Dispose();
-                }
-            }
-        }
-        catch
-        {
-        }
-    }
-
-    private async Task<object> EnsureManagerAsync()
-    {
-        if (_manager is not null)
-        {
-            return _manager;
-        }
-
-        var assembly = LoadFoundryAssembly();
-        var managerType = assembly.GetType(FoundryManagerTypeName)
-            ?? throw new InvalidOperationException("Foundry Local manager type was not found in the installed SDK package.");
-
-        var isInitialized = managerType.GetProperty("IsInitialized", BindingFlags.Public | BindingFlags.Static)?.GetValue(null) as bool?;
-        if (isInitialized == true)
-        {
-            _manager = managerType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null)
-                ?? throw new InvalidOperationException("Foundry Local reported initialization but did not expose a manager instance.");
-
-            return _manager;
-        }
-
-        var createMethod = managerType
-            .GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .FirstOrDefault(method => method.Name == "CreateAsync")
-            ?? throw new InvalidOperationException("Foundry Local CreateAsync was not found.");
-
-        var configuration = CreateFoundryConfiguration(assembly);
-        var createTask = createMethod.Invoke(null, CreateMethodArguments(createMethod, configuration, NullLogger.Instance, null))
-            ?? throw new InvalidOperationException("Foundry Local did not return an initialization task.");
-
-        await AwaitTaskResultAsync(createTask);
-
-        _manager = managerType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null)
-            ?? throw new InvalidOperationException("Foundry Local did not expose an initialized manager instance.");
-
-        return _manager;
-    }
-
-    private static Assembly LoadFoundryAssembly()
-    {
-        return AppDomain.CurrentDomain.GetAssemblies()
-            .FirstOrDefault(assembly => assembly.GetName().Name == FoundryAssemblyName)
-            ?? Assembly.Load(FoundryAssemblyName);
-    }
-
-    private static object CreateFoundryConfiguration(Assembly assembly)
-    {
-        var configurationType = assembly.GetType(FoundryConfigurationTypeName)
-            ?? throw new InvalidOperationException("Foundry Local configuration type was not found.");
-
-        var configuration = Activator.CreateInstance(configurationType)
-            ?? throw new InvalidOperationException("Foundry Local configuration could not be created.");
-
-        configurationType.GetProperty("AppName")?.SetValue(configuration, "NPUCodingAgent");
-        return configuration;
-    }
-
-    private static object?[] CreateMethodArguments(MethodInfo method, params object?[] preferredValues)
-    {
-        preferredValues ??= Array.Empty<object?>();
-
-        var parameters = method.GetParameters();
-        var arguments = new object?[parameters.Length];
-
-        for (var i = 0; i < parameters.Length; i++)
-        {
-            if (i < preferredValues.Length)
-            {
-                arguments[i] = preferredValues[i];
-                continue;
-            }
-
-            arguments[i] = parameters[i].HasDefaultValue ? parameters[i].DefaultValue : GetDefaultValue(parameters[i].ParameterType);
-        }
-
-        return arguments;
-    }
-
-    private static object? GetDefaultValue(Type parameterType)
-    {
-        if (!parameterType.IsValueType || Nullable.GetUnderlyingType(parameterType) is not null)
-        {
-            return null;
-        }
-
-        return Activator.CreateInstance(parameterType);
-    }
-
-    private static async Task EnsureExecutionProvidersAsync(object manager)
-    {
-        if (await TryInvokeTaskAsync(manager, "DownloadAndRegisterEpsAsync"))
-        {
-            return;
-        }
-
-        await TryInvokeTaskAsync(manager, "EnsureEpsDownloadedAsync");
-    }
-
-    private static async Task<object?> ResolveModelAsync(object catalog, string modelSelection)
-    {
-        var model = await TryInvokeTaskResultAsync(catalog, "GetModelAsync", modelSelection);
-        if (model is not null)
-        {
-            return model;
-        }
-
-        model = await TryInvokeTaskResultAsync(catalog, "GetModelVariantAsync", modelSelection);
-        if (model is not null)
-        {
-            return model;
-        }
-
-        if (await TryInvokeTaskResultAsync(catalog, "ListModelsAsync") is not IEnumerable models)
-        {
-            return null;
-        }
-
-        foreach (var candidate in models.Cast<object>())
-        {
-            if (MatchesModelSelection(candidate, modelSelection))
-            {
-                return candidate;
-            }
-        }
-
-        return null;
     }
 
     internal static bool MatchesModelSelection(object model, string modelSelection)
@@ -305,130 +188,17 @@ public sealed class LocalModelService : IDisposable
         return names.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    private static async Task<bool> TryInvokeTaskAsync(object target, string methodName, params object?[] preferredValues)
+    private static string ReadCompletionText(ChatCompletionCreateResponse completion)
     {
-        var method = target
-            .GetType()
-            .GetMethods(BindingFlags.Public | BindingFlags.Instance)
-            .Where(candidate => candidate.Name == methodName)
-            .OrderBy(candidate => candidate.GetParameters().Length)
-            .FirstOrDefault();
-
-        if (method is null)
-        {
-            return false;
-        }
-
-        var taskLike = method.Invoke(target, CreateMethodArguments(method, preferredValues))
-            ?? throw new InvalidOperationException($"Foundry Local method '{methodName}' returned no task.");
-
-        await AwaitTaskResultAsync(taskLike);
-        return true;
-    }
-
-    private static async Task<object?> TryInvokeTaskResultAsync(object target, string methodName, params object?[] preferredValues)
-    {
-        var method = target
-            .GetType()
-            .GetMethods(BindingFlags.Public | BindingFlags.Instance)
-            .Where(candidate => candidate.Name == methodName)
-            .OrderBy(candidate => candidate.GetParameters().Length)
-            .FirstOrDefault();
-
-        if (method is null)
-        {
-            return null;
-        }
-
-        var taskLike = method.Invoke(target, CreateMethodArguments(method, preferredValues))
-            ?? throw new InvalidOperationException($"Foundry Local method '{methodName}' returned no task.");
-
-        return await AwaitTaskResultAsync(taskLike);
-    }
-
-    private static async Task InvokeTaskAsync(object target, string methodName, params object?[] preferredValues)
-    {
-        var method = target
-            .GetType()
-            .GetMethods(BindingFlags.Public | BindingFlags.Instance)
-            .Where(candidate => candidate.Name == methodName)
-            .OrderBy(candidate => candidate.GetParameters().Length)
-            .FirstOrDefault()
-            ?? throw new InvalidOperationException($"Foundry Local method '{methodName}' was not found on {target.GetType().FullName}.");
-
-        var taskLike = method.Invoke(target, CreateMethodArguments(method, preferredValues))
-            ?? throw new InvalidOperationException($"Foundry Local method '{methodName}' returned no task.");
-
-        await AwaitTaskResultAsync(taskLike);
-    }
-
-    private static async Task<object?> InvokeTaskResultAsync(object target, string methodName, params object?[] preferredValues)
-    {
-        var method = target
-            .GetType()
-            .GetMethods(BindingFlags.Public | BindingFlags.Instance)
-            .Where(candidate => candidate.Name == methodName)
-            .OrderBy(candidate => candidate.GetParameters().Length)
-            .FirstOrDefault()
-            ?? throw new InvalidOperationException($"Foundry Local method '{methodName}' was not found on {target.GetType().FullName}.");
-
-        var taskLike = method.Invoke(target, CreateMethodArguments(method, preferredValues))
-            ?? throw new InvalidOperationException($"Foundry Local method '{methodName}' returned no task.");
-
-        return await AwaitTaskResultAsync(taskLike);
-    }
-
-    private static async Task<object?> AwaitTaskResultAsync(object taskLike)
-    {
-        if (taskLike is Task task)
-        {
-            await task;
-            return taskLike.GetType().GetProperty("Result")?.GetValue(taskLike);
-        }
-
-        throw new InvalidOperationException("Foundry Local returned an unexpected async result.");
-    }
-
-    private static object CreateChatMessages(List<(string role, string content)> chatHistory)
-    {
-        var messageType = Type.GetType(ChatMessageTypeName, throwOnError: true)!;
-        var listType = typeof(List<>).MakeGenericType(messageType);
-        var list = Activator.CreateInstance(listType)
-            ?? throw new InvalidOperationException("Could not create Foundry Local chat message list.");
-        var addMethod = listType.GetMethod("Add")!;
-
-        addMethod.Invoke(list, new[] { CreateChatMessage(messageType, "system", SystemPrompt) });
-
-        foreach (var (role, content) in chatHistory)
-        {
-            var normalizedRole = role is "assistant" or "system" ? role : "user";
-            addMethod.Invoke(list, new[] { CreateChatMessage(messageType, normalizedRole, content) });
-        }
-
-        return list;
-    }
-
-    private static object CreateChatMessage(Type messageType, string role, string content)
-    {
-        var message = Activator.CreateInstance(messageType)
-            ?? throw new InvalidOperationException("Could not create Foundry Local chat message.");
-
-        messageType.GetProperty("Role")?.SetValue(message, role);
-        messageType.GetProperty("Content")?.SetValue(message, content);
-        return message;
-    }
-
-    private static string ReadCompletionText(object completion)
-    {
-        if (GetMemberValue(completion, "Choices") is not IEnumerable choices)
+        if (completion.Choices.Count == 0)
         {
             return string.Empty;
         }
 
-        foreach (var choice in choices.Cast<object>())
+        foreach (var choice in completion.Choices)
         {
-            var message = GetMemberValue(choice, "Message");
-            var content = GetMemberValue(message, "Content")?.ToString();
+            var message = choice.Message;
+            var content = message?.Content?.ToString();
             if (!string.IsNullOrWhiteSpace(content))
             {
                 return content;
@@ -438,25 +208,20 @@ public sealed class LocalModelService : IDisposable
         return string.Empty;
     }
 
-    private static ModelRuntimeInfo ReadRuntimeInfo(object? model, string modelAlias, string? modelId, Uri? endpoint)
+    private static ModelRuntimeInfo ReadRuntimeInfo(IModel? model, string modelAlias, string? modelId, Uri? endpoint)
     {
-        var selectedVariant = GetMemberValue(model, "SelectedVariant");
-        var variantInfo = GetMemberValue(selectedVariant, "Info");
-        var runtime = GetMemberValue(variantInfo, "Runtime");
-
-        var deviceType = GetMemberValue(runtime, "DeviceType")?.ToString() ?? "Unknown";
-        var executionProvider = GetMemberValue(runtime, "ExecutionProvider")?.ToString() ?? "Unknown";
-        var modelDisplayName = GetMemberValue(variantInfo, "DisplayName")?.ToString();
-        var providerType = GetMemberValue(variantInfo, "ProviderType")?.ToString();
+        ArgumentNullException.ThrowIfNull(model);
+        var deviceType = model.Info?.Runtime?.DeviceType;
+        var executionProvider = model.Info?.Runtime?.ExecutionProvider;
+        var modelDisplayName = model.Info?.DisplayName;
+        var providerType = model.Info?.ProviderType;
 
         var endpointText = endpoint?.ToString() ?? "In-process SDK client";
-        var isNpu = string.Equals(deviceType, "NPU", StringComparison.OrdinalIgnoreCase)
-            || executionProvider.Contains("npu", StringComparison.OrdinalIgnoreCase)
-            || executionProvider.Contains("qnn", StringComparison.OrdinalIgnoreCase);
+        var isNpu = deviceType == DeviceType.NPU;
 
         var acceleratorSummary = isNpu
             ? $"NPU ({executionProvider})"
-            : string.Equals(deviceType, "Unknown", StringComparison.OrdinalIgnoreCase)
+            : string.Equals(deviceType.ToString(), "Unknown", StringComparison.OrdinalIgnoreCase)
                 ? executionProvider
                 : $"{deviceType} ({executionProvider})";
 
@@ -472,15 +237,12 @@ public sealed class LocalModelService : IDisposable
             acceleratorSummary);
     }
 
-    private static Uri? GetManagerEndpoint(object manager)
+    private static Uri? GetManagerEndpoint(FoundryLocalManager manager)
     {
-        if (GetMemberValue(manager, "Urls") is string[] urls)
+        var firstUrl = manager.Urls.FirstOrDefault(url => !string.IsNullOrWhiteSpace(url));
+        if (Uri.TryCreate(firstUrl, UriKind.Absolute, out var endpoint))
         {
-            var firstUrl = urls.FirstOrDefault(url => !string.IsNullOrWhiteSpace(url));
-            if (Uri.TryCreate(firstUrl, UriKind.Absolute, out var endpoint))
-            {
-                return endpoint;
-            }
+            return endpoint;
         }
 
         return null;
@@ -574,9 +336,75 @@ public sealed class LocalModelService : IDisposable
         string ModelId,
         string DisplayName,
         string Endpoint,
-        string DeviceType,
+        DeviceType? DeviceType,
         string ExecutionProvider,
         string ProviderType,
         bool IsNpu,
         string AcceleratorSummary);
+
+    public void Dispose()
+    {
+        Dispose(disposing: true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected void Dispose(bool disposing)
+    {
+        FoundryLocalManager.Instance.Dispose();
+
+        if (disposing)
+        {
+            if (_model is IDisposable disposable)
+            {
+                disposable.Dispose();
+                _model = null;
+            }
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (_model is not null)
+            {
+                await _model.UnloadAsync();
+            }
+
+            if (FoundryLocalManager.Instance is not null)
+            {
+                await FoundryLocalManager.Instance.StopWebServiceAsync();
+
+                if (FoundryLocalManager.Instance is IAsyncDisposable asyncDisposable)
+                {
+                    await asyncDisposable.DisposeAsync();
+                }
+                else if (FoundryLocalManager.Instance is IDisposable disposable)
+                {
+                    disposable.Dispose();
+                }
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    protected virtual async ValueTask DisposeAsyncCore()
+    {
+        if (_model is not null)
+        {
+            await _model.UnloadAsync();
+        }
+
+        if (_model is IAsyncDisposable disposable)
+        {
+            await disposable.DisposeAsync().ConfigureAwait(false);
+        }
+        else
+        {
+        }
+
+        _model = null;
+    }
 }
