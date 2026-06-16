@@ -9,14 +9,14 @@ class Program
     static async Task Main(string[] args)
     {
         AnsiConsole.Write(
-            new FigletText("NPU Agent")
+            new FigletText("NPU Coding Agent")
             {
-                Justification = Justify.Center,
+                Justification = Justify.Left,
                 Color = new Color(0, 255, 255)
             });
-        AnsiConsole.MarkupLine("[dim center]MVP (v1.0)[/]");
         AnsiConsole.WriteLine();
 
+        AnsiConsole.MarkupLine("[dim]Version: MVP (v1.0)[/]");
         AnsiConsole.MarkupLine($"[dim]Workspace:[/] {Environment.CurrentDirectory}");
         AnsiConsole.MarkupLine($"[dim]Platform:[/]  {Environment.OSVersion.Platform} {Environment.OSVersion.Version}");
         AnsiConsole.WriteLine();
@@ -270,7 +270,8 @@ class Program
                             response = await modelService.GetResponseAsync(chatHistory);
                         });
                     chatHistory.Add(new ChatMessage("assistant", response));
-                    AnsiConsole.MarkupLine($"\n[cyan]Assistant:[/] {response}");
+                    AnsiConsole.MarkupLine($"\n[cyan]Assistant:[/]");
+                    AnsiConsole.WriteLine(response);
                 }
                 catch (Exception ex)
                 {
@@ -378,7 +379,7 @@ class Program
         
         if (totalLines > previewLines.Count)
         {
-            content += $"\n[dim]... ({totalLines - previewLines.Count} more lines)[/]";
+            content += $"\n\n[dim]... ({totalLines - previewLines.Count} more lines)[/]";
         }
 
         var table = new Table();
