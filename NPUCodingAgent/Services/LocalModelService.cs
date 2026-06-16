@@ -13,7 +13,7 @@ namespace NPUCodingAgent.Services;
 public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncDisposable
 {
     public const string SystemPrompt = "You are a helpful coding assistant. Provide clear, concise answers about code and programming.";
-    
+
     private const string DefaultModelAlias = "phi-3-mini-4k";
 
     private readonly string _modelAlias = string.IsNullOrWhiteSpace(modelAlias)
@@ -68,12 +68,6 @@ public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncD
 
         foundryLocalManager = FoundryLocalManager.Instance;
 
-        var eps = foundryLocalManager.DiscoverEps();
-        foreach (var ep in eps)
-        {
-            AnsiConsole.MarkupLine($"{ep.Name} — registered: {ep.IsRegistered}");
-        }
-
         // Download and register execution providers
         await AnsiConsole.Status()
             .StartAsync("[cyan]Registering execution providers...[/]", async ctx =>
@@ -93,7 +87,7 @@ public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncD
         // If the model is not cached, download it with a progress bar else just load it
         if (cachedModels is not null && cachedModels.Any(m => string.Equals(m.Id, _modelId, StringComparison.OrdinalIgnoreCase)))
         {
-            AnsiConsole.MarkupLine($"[green]✓[/] Model '{_modelId}' is already cached locally");
+            AnsiConsole.MarkupLine($"[green]✓[/] Model '{_modelId}' is cached locally");
         }
         else
         {
@@ -119,7 +113,7 @@ public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncD
         }
 
         await AnsiConsole.Status()
-            .Spinner(Spinner.Known.Dots)
+            .Spinner(Spinner.Known.Pong)
             .SpinnerStyle(Style.Parse("cyan"))
             .StartAsync("[cyan]Loading model...[/]", async ctx =>
             {
@@ -257,6 +251,18 @@ public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncD
         }
 
         return string.Empty;
+    }
+
+    private static FoundryLocalManager? TryGetExistingManager()
+    {
+        try
+        {
+            return FoundryLocalManager.Instance;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
     }
 
     private static ModelRuntimeInfo ReadRuntimeInfo(IModel? model, string modelAlias, string? modelId, Uri? endpoint)
@@ -401,7 +407,7 @@ public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncD
 
     protected void Dispose(bool disposing)
     {
-        FoundryLocalManager.Instance.Dispose();
+        //FoundryLocalManager.Instance.Dispose();
 
         if (disposing)
         {
@@ -439,6 +445,8 @@ public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncD
         catch
         {
         }
+
+        GC.SuppressFinalize(this);
     }
 
     protected virtual async ValueTask DisposeAsyncCore()

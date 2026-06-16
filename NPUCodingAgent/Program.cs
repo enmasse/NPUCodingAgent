@@ -179,11 +179,8 @@ class Program
                     var nextModelService = new LocalModelService(modelSelection);
                     try
                     {
-                        await AnsiConsole.Status()
-                            .StartAsync($"[cyan]Switching to '[yellow]{modelSelection}[/]'...[/]", async ctx =>
-                            {
-                                await nextModelService.InitializeAsync();
-                            });
+                        AnsiConsole.MarkupLine($"[cyan]Switching to '[yellow]{modelSelection}[/]'...[/]");
+                        await nextModelService.InitializeAsync();
                         var runtimeInfo = await nextModelService.GetRuntimeInfoAsync();
                         modelService.Dispose();
                         modelService = nextModelService;
