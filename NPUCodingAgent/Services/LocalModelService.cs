@@ -11,7 +11,9 @@ namespace NPUCodingAgent.Services;
 
 public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncDisposable
 {
-    private const string DefaultModelAlias = "phi-3-mini-128k-instruct-qnn-npu:4";
+    public const string SystemPrompt = "You are a helpful coding assistant. Provide clear, concise answers about code and programming.";
+    
+    private const string DefaultModelAlias = "phi-3-mini-4k";
 
     private readonly string _modelAlias = string.IsNullOrWhiteSpace(modelAlias)
             ? Environment.GetEnvironmentVariable("FOUNDRY_LOCAL_MODEL")?.Trim() ?? DefaultModelAlias
@@ -24,6 +26,7 @@ public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncD
     private Uri? _endpoint;
     private ModelRuntimeInfo? _runtimeInfo;
     private bool _initialized;
+    private FoundryLocalManager? foundryLocalManager;
 
     public string Endpoint => _endpoint?.ToString() ?? "In-process SDK client";
 
@@ -50,25 +53,36 @@ public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncD
         });
         var logger = loggerFactory.CreateLogger<Program>();
 
-        await FoundryLocalManager.CreateAsync(config, logger);
-        var manager = FoundryLocalManager.Instance;
+        if (foundryLocalManager is null)
+        {
+            try
+            {
+                var instance = FoundryLocalManager.Instance;
+            }
+            catch
+            {
+                await FoundryLocalManager.CreateAsync(config, logger);
+            }
+        }
 
-        var eps = manager.DiscoverEps();
+        foundryLocalManager = FoundryLocalManager.Instance;
+
+        var eps = foundryLocalManager.DiscoverEps();
         foreach (var ep in eps)
         {
             Console.WriteLine($"{ep.Name} — registered: {ep.IsRegistered}");
         }
 
         // Download and register OpenVINOExecutionProvider
-        Console.WriteLine($"Registering execution provider: {eps[1].Name} ");
-        var result = await manager.DownloadAndRegisterEpsAsync([eps[1].Name]/*, (p, d) => Console.WriteLine(p)*/);
+        Console.WriteLine($"Registering execution providers... ");
+        var result = await foundryLocalManager.DownloadAndRegisterEpsAsync();
         Console.WriteLine($"Status: {result.Status}");
 
-        _catalog = await manager.GetCatalogAsync() ?? throw new InvalidOperationException("Foundry Local did not provide a model catalog.");
+        _catalog = await foundryLocalManager.GetCatalogAsync() ?? throw new InvalidOperationException("Foundry Local did not provide a model catalog.");
         var cachedModels = await _catalog.GetCachedModelsAsync();
 
         var models = await _catalog.ListModelsAsync();
-        _model = await _catalog.GetModelAsync("phi-3-mini-4k") ?? throw new InvalidOperationException($"Model selection '{_modelAlias}' was not found in the Foundry Local catalog.");
+        _model = await _catalog.GetModelAsync(_modelAlias) ?? throw new InvalidOperationException($"Model selection '{_modelAlias}' was not found in the Foundry Local catalog.");
 
         _modelId = _model?.Id;
 
@@ -90,8 +104,8 @@ public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncD
 
         try
         {
-            await manager.StartWebServiceAsync();
-            _endpoint = GetManagerEndpoint(manager);
+            await foundryLocalManager.StartWebServiceAsync();
+            _endpoint = GetManagerEndpoint(foundryLocalManager);
         }
         catch
         {

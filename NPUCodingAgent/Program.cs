@@ -42,8 +42,10 @@ class Program
             Console.WriteLine();
             PrintHelp();
 
-            //var chatHistory = new List<(string role, string content)>();
-            var chatHistory = new List<ChatMessage>();
+            var chatHistory = new List<ChatMessage>
+            {
+                new("system", LocalModelService.SystemPrompt)
+            };
 
             while (true)
             {

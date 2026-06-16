@@ -5,7 +5,7 @@
       "commandLineArgs": "",
       "environmentVariables": {
         "DOTNET_ENVIRONMENT": "Development",
-        "FOUNDRY_LOCAL_MODEL": "Phi-3-mini-4k-instruct-openvino-npu:2"
+        "FOUNDRY_LOCAL_MODEL2": "Phi-3-mini-4k-instruct-openvino-npu:2"
       }
     }
   }
