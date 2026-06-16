@@ -2,6 +2,7 @@ using Betalgo.Ranul.OpenAI.ObjectModels.RequestModels;
 using Betalgo.Ranul.OpenAI.ObjectModels.ResponseModels;
 using Microsoft.AI.Foundry.Local;
 using Microsoft.Extensions.Logging;
+using Spectre.Console;
 using System.Collections;
 using System.Runtime.CompilerServices;
 
@@ -86,16 +87,34 @@ public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncD
 
         _modelId = _model?.Id;
 
-        await _model.DownloadAsync((p) => Console.WriteLine($"Download progress: {p}%"));
+        await AnsiConsole.Progress()
+            .Columns(
+                new ProgressColumn[]
+                {
+                    new TaskDescriptionColumn(),
+                    new ProgressBarColumn(),
+                    new PercentageColumn(),
+                    new RemainingTimeColumn()
+                })
+            .StartAsync(async ctx =>
+            {
+                var task = ctx.AddTask("[cyan]Downloading model[/]");
+                await _model.DownloadAsync((p) =>
+                {
+                    task.Value = p;
+                });
+            });
+        AnsiConsole.MarkupLine("[green]✓[/] Model downloaded successfully");
+        
         try
         {
-            Console.WriteLine("Loading model...");
+            AnsiConsole.MarkupLine("[cyan]Loading model...[/]");
             await _model.LoadAsync();
-            Console.WriteLine("Model loaded.");
+            AnsiConsole.MarkupLine("[green]✓[/] Model loaded");
         }
         catch (Exception ex)
         {
-            Console.WriteLine(ex.Message);
+            AnsiConsole.MarkupLine($"[red]✗ Failed to load model: {ex.Message}[/]");
         }
 
          _chatClient = await _model.GetChatClientAsync() ?? throw new InvalidOperationException("Foundry Local did not provide a chat client for the selected model.");

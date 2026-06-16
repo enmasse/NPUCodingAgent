@@ -1,5 +1,6 @@
 ﻿using Betalgo.Ranul.OpenAI.ObjectModels.RequestModels;
 using NPUCodingAgent.Services;
+using Spectre.Console;
 
 namespace NPUCodingAgent;
 
@@ -7,15 +8,18 @@ class Program
 {
     static async Task Main(string[] args)
     {
-        Console.ForegroundColor = ConsoleColor.Cyan;
-        Console.WriteLine("╔════════════════════════════════════════╗");
-        Console.WriteLine("║     NPU Coding Agent MVP (v1.0)        ║");
-        Console.WriteLine("╚════════════════════════════════════════╝");
-        Console.ResetColor();
-        Console.WriteLine();
-        Console.WriteLine($"Workspace: {Environment.CurrentDirectory}");
-        Console.WriteLine($"Platform:  {Environment.OSVersion.Platform} {Environment.OSVersion.Version}");
-        Console.WriteLine();
+        var panel = new Panel("[bold cyan]NPU Coding Agent MVP (v1.0)[/]")
+        {
+            Border = BoxBorder.Rounded,
+            Expand = false,
+            Padding = new Padding(1, 1)
+        };
+        AnsiConsole.Write(panel);
+        AnsiConsole.WriteLine();
+
+        AnsiConsole.MarkupLine($"[dim]Workspace:[/] {Environment.CurrentDirectory}");
+        AnsiConsole.MarkupLine($"[dim]Platform:[/]  {Environment.OSVersion.Platform} {Environment.OSVersion.Version}");
+        AnsiConsole.WriteLine();
 
         var modelService = new LocalModelService();
         var workspaceService = new WorkspaceService(Environment.CurrentDirectory);
@@ -23,7 +27,7 @@ class Program
 
         try
         {
-            Console.WriteLine($"Starting Foundry Local with selection '{modelService.RequestedModelSelection}'...");
+            AnsiConsole.MarkupLine($"[cyan]Starting Foundry Local with selection '[yellow]{modelService.RequestedModelSelection}[/]'...[/]");
             try
             {
                 await modelService.InitializeAsync();
@@ -31,10 +35,8 @@ class Program
             }
             catch (Exception ex)
             {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"✗ Error initializing Foundry Local: {ex.Message}");
-                Console.ResetColor();
-                Console.WriteLine();
+                AnsiConsole.MarkupLine($"[red]✗ Error initializing Foundry Local: {ex.Message}[/]");
+                AnsiConsole.WriteLine();
                 await PrintSelectableModelsAsync(modelService, 20);
                 PrintSetupGuide();
             }
@@ -60,7 +62,7 @@ class Program
                 if (input.Equals("exit", StringComparison.OrdinalIgnoreCase)
                     || input.Equals("quit", StringComparison.OrdinalIgnoreCase))
                 {
-                    Console.WriteLine("Goodbye!");
+                    AnsiConsole.MarkupLine("\n[cyan]Goodbye![/]");
                     break;
                 }
 
@@ -70,18 +72,23 @@ class Program
                     continue;
                 }
 
-                if (input.StartsWith("/list", StringComparison.OrdinalIgnoreCase))
+                if (input.Equals("/list", StringComparison.OrdinalIgnoreCase))
                 {
                     var files = workspaceService.ListFiles();
-                    Console.WriteLine($"\nFound {files.Count} files:");
+                    AnsiConsole.MarkupLine($"\n[cyan]Found {files.Count} files:[/]");
+                    var table = new Table();
+                    table.AddColumn("[cyan]File[/]");
+                    
                     foreach (var file in files.Take(50))
                     {
-                        Console.WriteLine($"  {file}");
+                        table.AddRow(file);
                     }
+                    
+                    AnsiConsole.Write(table);
 
                     if (files.Count > 50)
                     {
-                        Console.WriteLine($"  ... and {files.Count - 50} more");
+                        AnsiConsole.MarkupLine($"[dim]... and {files.Count - 50} more[/]");
                     }
 
                     continue;
@@ -93,13 +100,16 @@ class Program
                     var content = workspaceService.ReadFile(filePath);
                     if (content is not null)
                     {
-                        Console.WriteLine($"\n--- {filePath} ---");
-                        Console.WriteLine(content);
-                        Console.WriteLine("--- End ---");
+                        var readPanel = new Panel(content)
+                        {
+                            Header = new PanelHeader($"[cyan]{filePath}[/]"),
+                            Border = BoxBorder.Rounded
+                        };
+                        AnsiConsole.Write(readPanel);
                     }
                     else
                     {
-                        Console.WriteLine($"Could not read file: {filePath}");
+                        AnsiConsole.MarkupLine($"[red]✗ Could not read file: {filePath}[/]");
                     }
 
                     continue;
@@ -110,11 +120,17 @@ class Program
                     try
                     {
                         var status = await modelService.GetStatusAsync();
-                        Console.WriteLine($"\n{status}");
+                        var statusPanel = new Panel(status)
+                        {
+                            Header = new PanelHeader("[cyan]Model Status[/]"),
+                            Border = BoxBorder.Rounded,
+                            Padding = new Padding(1, 1)
+                        };
+                        AnsiConsole.Write(statusPanel);
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"\nStatus check failed: {ex.Message}");
+                        AnsiConsole.MarkupLine($"\n[red]✗ Status check failed: {ex.Message}[/]");
                     }
 
                     continue;
@@ -125,11 +141,11 @@ class Program
                     try
                     {
                         var pingResponse = await modelService.PingAsync();
-                        Console.WriteLine($"\nPing response: {pingResponse}");
+                        AnsiConsole.MarkupLine($"\n[green]✓ Ping response:[/] {pingResponse}");
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"\nPing failed: {ex.Message}");
+                        AnsiConsole.MarkupLine($"\n[red]✗ Ping failed: {ex.Message}[/]");
                     }
 
                     continue;
@@ -146,14 +162,14 @@ class Program
                     var modelSelection = input.Substring(5).Trim();
                     if (string.IsNullOrWhiteSpace(modelSelection))
                     {
-                        Console.WriteLine("\nUsage: /use <model-alias-or-id>");
+                        AnsiConsole.MarkupLine("\n[yellow]Usage:[/] /use <model-alias-or-id>");
                         continue;
                     }
 
                     var nextModelService = new LocalModelService(modelSelection);
                     try
                     {
-                        Console.WriteLine($"\nSwitching to '{modelSelection}'...");
+                        AnsiConsole.MarkupLine($"\n[cyan]Switching to '[yellow]{modelSelection}[/]'...[/]");
                         await nextModelService.InitializeAsync();
                         var runtimeInfo = await nextModelService.GetRuntimeInfoAsync();
                         modelService.Dispose();
@@ -164,7 +180,7 @@ class Program
                     catch (Exception ex)
                     {
                         nextModelService.Dispose();
-                        Console.WriteLine($"\nModel switch failed: {ex.Message}");
+                        AnsiConsole.MarkupLine($"\n[red]✗ Model switch failed: {ex.Message}[/]");
                         await PrintSelectableModelsAsync(modelService, 20);
                     }
 
@@ -174,16 +190,16 @@ class Program
                 if (input.StartsWith("/edit ", StringComparison.OrdinalIgnoreCase))
                 {
                     var filePath = input.Substring(6).Trim();
-                    Console.WriteLine($"\nPreparing to edit: {filePath}");
+                    AnsiConsole.MarkupLine($"\n[cyan]Preparing to edit: {filePath}[/]");
 
                     var currentContent = workspaceService.ReadFile(filePath);
                     if (currentContent is null)
                     {
-                        Console.WriteLine("File not found or not readable.");
+                        AnsiConsole.MarkupLine("[red]✗ File not found or not readable.[/]");
                         continue;
                     }
 
-                    Console.Write("Describe the change you want: ");
+                    AnsiConsole.MarkupLine("[cyan]Describe the change you want:[/] ");
                     var changeRequest = Console.ReadLine();
                     if (string.IsNullOrWhiteSpace(changeRequest))
                     {
@@ -199,27 +215,27 @@ class Program
                         chatHistory.Add(new ChatMessage("assistant", response));
                         PrintEditPreview(currentContent, response);
 
-                        Console.Write("\nType 'apply' to save these changes, or anything else to cancel: ");
+                        AnsiConsole.MarkupLine("\n[cyan]Type '[yellow]apply[/]' to save these changes, or anything else to cancel:[/] ");
                         var confirm = Console.ReadLine();
                         if (confirm?.Equals("apply", StringComparison.OrdinalIgnoreCase) == true)
                         {
                             if (editService.WriteFile(filePath, response))
                             {
-                                Console.WriteLine("File updated successfully.");
+                                AnsiConsole.MarkupLine("[green]✓ File updated successfully.[/]");
                             }
                             else
                             {
-                                Console.WriteLine("Failed to write file.");
+                                AnsiConsole.MarkupLine("[red]✗ Failed to write file.[/]");
                             }
                         }
                         else
                         {
-                            Console.WriteLine("Edit cancelled.");
+                            AnsiConsole.MarkupLine("[yellow]Edit cancelled.[/]");
                         }
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"\nEdit request failed: {ex.Message}");
+                        AnsiConsole.MarkupLine($"\n[red]✗ Edit request failed: {ex.Message}[/]");
                     }
 
                     continue;
@@ -231,11 +247,11 @@ class Program
                 {
                     var response = await modelService.GetResponseAsync(chatHistory);
                     chatHistory.Add(new ChatMessage("assistant", response));
-                    Console.WriteLine($"\nAssistant: {response}");
+                    AnsiConsole.MarkupLine($"\n[cyan]Assistant:[/] {response}");
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"\nError: {ex.Message}");
+                    AnsiConsole.MarkupLine($"\n[red]✗ Error: {ex.Message}[/]");
                 }
 
                 if (chatHistory.Count > 20)
@@ -252,12 +268,10 @@ class Program
 
     static void PrintRuntimeReady(LocalModelService modelService, LocalModelService.ModelRuntimeInfo runtimeInfo)
     {
-        Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine($"✓ Foundry Local ready: {modelService.ModelName}");
-        Console.ResetColor();
-        Console.WriteLine($"  Endpoint: {runtimeInfo.Endpoint}");
-        Console.WriteLine($"  Accelerator: {runtimeInfo.AcceleratorSummary}");
-        Console.WriteLine($"  NPU detected: {(runtimeInfo.IsNpu ? "yes" : "no / unknown")}");
+        AnsiConsole.MarkupLine($"[green]✓[/] Foundry Local ready: [bold cyan]{modelService.ModelName}[/]");
+        AnsiConsole.MarkupLine($"[dim]  Endpoint:[/] {runtimeInfo.Endpoint}");
+        AnsiConsole.MarkupLine($"[dim]  Accelerator:[/] {runtimeInfo.AcceleratorSummary}");
+        AnsiConsole.MarkupLine($"[dim]  NPU detected:[/] {(runtimeInfo.IsNpu ? "[green]yes[/]" : "no / unknown")}");
     }
 
     static async Task PrintSelectableModelsAsync(LocalModelService modelService, int? maxToShow = null)
@@ -267,100 +281,119 @@ class Program
             var models = await modelService.ListAvailableModelsAsync();
             if (models.Count == 0)
             {
-                Console.WriteLine("\nFoundry Local did not report any selectable models.");
+                AnsiConsole.MarkupLine("\n[yellow]Foundry Local did not report any selectable models.[/]");
                 return;
             }
 
-            Console.WriteLine($"\nSelectable models ({models.Count}):");
-            foreach (var model in maxToShow is int limit ? models.Take(limit) : models)
+            var table = new Table();
+            table.Title = new TableTitle($"[cyan]Selectable Models ({models.Count})[/]");
+            table.AddColumn("[cyan]Model[/]");
+            
+            var displayModels = maxToShow is int limit ? models.Take(limit) : models;
+            foreach (var model in displayModels)
             {
-                Console.WriteLine($"  {model}");
+                table.AddRow(model);
             }
+
+            AnsiConsole.Write(table);
 
             if (maxToShow is int visibleCount && models.Count > visibleCount)
             {
-                Console.WriteLine($"  ... and {models.Count - visibleCount} more");
+                AnsiConsole.MarkupLine($"[dim]... and {models.Count - visibleCount} more[/]");
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"\nModel listing failed: {ex.Message}");
+            AnsiConsole.MarkupLine($"[red]✗ Model listing failed: {ex.Message}[/]");
         }
     }
 
     static void PrintHelp()
     {
-        Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine("Available Commands:");
-        Console.ResetColor();
-        Console.WriteLine("  <message>       - Chat with the coding assistant about your code");
-        Console.WriteLine("  /list          - List all source files in the workspace");
-        Console.WriteLine("  /read <file>   - Read and display a specific file");
-        Console.WriteLine("  /status        - Show the active model and local runtime details");
-        Console.WriteLine("  /ping          - Run a quick model smoke test");
-        Console.WriteLine("  /models        - List selectable Foundry Local aliases and variant IDs");
-        Console.WriteLine("  /use <model>   - Switch to a specific Foundry Local model alias or ID");
-        Console.WriteLine("  /edit <file>   - Edit a file with AI assistance (creates .backup)");
-        Console.WriteLine("  help           - Show this help message");
-        Console.WriteLine("  exit           - Exit the application");
-        Console.WriteLine();
-        Console.WriteLine("Example workflow:");
-        Console.WriteLine("  > /list");
-        Console.WriteLine("  > /read Program.cs");
-        Console.WriteLine("  > /ping");
-        Console.WriteLine("  > /edit Program.cs");
-        Console.WriteLine("  > Add error handling to the Main method");
+        var table = new Table();
+        table.Title = new TableTitle("[yellow]Available Commands[/]");
+        table.AddColumn("[cyan]Command[/]");
+        table.AddColumn("[dim]Description[/]");
+        
+        table.AddRow("[yellow]<message>[/]", "Chat with the coding assistant about your code");
+        table.AddRow("[yellow]/list[/]", "List all source files in the workspace");
+        table.AddRow("[yellow]/read <file>[/]", "Read and display a specific file");
+        table.AddRow("[yellow]/status[/]", "Show the active model and local runtime details");
+        table.AddRow("[yellow]/ping[/]", "Run a quick model smoke test");
+        table.AddRow("[yellow]/models[/]", "List selectable Foundry Local aliases and variant IDs");
+        table.AddRow("[yellow]/use <model>[/]", "Switch to a specific Foundry Local model alias or ID");
+        table.AddRow("[yellow]/edit <file>[/]", "Edit a file with AI assistance (creates .backup)");
+        table.AddRow("[yellow]help[/]", "Show this help message");
+        table.AddRow("[yellow]exit[/]", "Exit the application");
+        
+        AnsiConsole.Write(table);
+        AnsiConsole.WriteLine();
+        
+        AnsiConsole.MarkupLine("[dim]Example workflow:[/]");
+        AnsiConsole.MarkupLine("[dim]  > /list[/]");
+        AnsiConsole.MarkupLine("[dim]  > /read Program.cs[/]");
+        AnsiConsole.MarkupLine("[dim]  > /ping[/]");
+        AnsiConsole.MarkupLine("[dim]  > /edit Program.cs[/]");
+        AnsiConsole.MarkupLine("[dim]  > Add error handling to the Main method[/]");
     }
 
     static void PrintEditPreview(string currentContent, string proposedContent)
     {
-        Console.WriteLine("\n--- Proposed Changes ---");
-        Console.WriteLine($"Current size:  {currentContent.Length} characters");
-        Console.WriteLine($"Proposed size: {proposedContent.Length} characters");
-        Console.WriteLine();
-
         var previewLines = proposedContent
             .Split(Environment.NewLine)
             .Take(40)
             .ToList();
 
-        foreach (var line in previewLines)
-        {
-            Console.WriteLine(line);
-        }
-
+        var content = string.Join(Environment.NewLine, previewLines);
         var totalLines = proposedContent.Split(Environment.NewLine).Length;
+        
         if (totalLines > previewLines.Count)
         {
-            Console.WriteLine($"... ({totalLines - previewLines.Count} more lines)");
+            content += $"\n[dim]... ({totalLines - previewLines.Count} more lines)[/]";
         }
 
-        Console.WriteLine("--- End ---");
+        var table = new Table();
+        table.AddColumn("[cyan]Metric[/]");
+        table.AddColumn("[cyan]Value[/]");
+        table.AddRow("[dim]Current size[/]", $"{currentContent.Length} characters");
+        table.AddRow("[dim]Proposed size[/]", $"{proposedContent.Length} characters");
+
+        AnsiConsole.WriteLine();
+        AnsiConsole.Write(table);
+        AnsiConsole.WriteLine();
+
+        var previewPanel = new Panel(content)
+        {
+            Header = new PanelHeader("[cyan]Proposed Changes[/]"),
+            Border = BoxBorder.Rounded
+        };
+        AnsiConsole.Write(previewPanel);
     }
 
     static void PrintSetupGuide()
     {
-        Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine("Setup Guide:");
-        Console.ResetColor();
-        Console.WriteLine();
-        Console.WriteLine("This application uses Foundry Local to start a model and use either its local web endpoint or the in-process SDK client.");
-        Console.WriteLine();
-        Console.WriteLine("Steps to set up:");
-        Console.WriteLine("  1. Restore the project so the Foundry Local SDK packages are installed.");
-        Console.WriteLine();
-        Console.WriteLine("  2. Ensure Foundry Local can access a supported local model catalog.");
-        Console.WriteLine();
-        Console.WriteLine("  3. Optionally set the default model before running:");
-        Console.WriteLine("     - FOUNDRY_LOCAL_MODEL=phi-3-mini-128k-instruct-qnn-npu:4");
-        Console.WriteLine();
-        Console.WriteLine("  4. Run /models to inspect every selectable alias and variant ID from the local catalog.");
-        Console.WriteLine();
-        Console.WriteLine("  5. Use /use <model> to switch to the exact model variant you want to run.");
-        Console.WriteLine();
-        Console.WriteLine("  6. Use /status to confirm the active model and whether Foundry Local exposed a web endpoint or is using the in-process SDK client.");
-        Console.WriteLine();
-        Console.WriteLine("For more information, visit:");
-        Console.WriteLine("  https://learn.microsoft.com/en-us/azure/foundry-local/get-started");
+        var setupSteps = new List<string>
+        {
+            "[cyan]1.[/] Restore the project so the Foundry Local SDK packages are installed.",
+            "[cyan]2.[/] Ensure Foundry Local can access a supported local model catalog.",
+            "[cyan]3.[/] Optionally set the default model before running:",
+            "     [dim]FOUNDRY_LOCAL_MODEL=phi-3-mini-128k-instruct-qnn-npu:4[/]",
+            "[cyan]4.[/] Run [yellow]/models[/] to inspect every selectable alias and variant ID from the local catalog.",
+            "[cyan]5.[/] Use [yellow]/use <model>[/] to switch to the exact model variant you want to run.",
+            "[cyan]6.[/] Use [yellow]/status[/] to confirm the active model and whether Foundry Local exposed a web endpoint or is using the in-process SDK client."
+        };
+
+        var setupPanel = new Panel(string.Join("\n", setupSteps))
+        {
+            Header = new PanelHeader("[yellow]Setup Guide[/]"),
+            Border = BoxBorder.Rounded,
+            Padding = new Padding(1, 1)
+        };
+        
+        AnsiConsole.Write(setupPanel);
+        AnsiConsole.WriteLine();
+        
+        AnsiConsole.MarkupLine("[dim]For more information, visit:[/]");
+        AnsiConsole.MarkupLine("[cyan]  https://learn.microsoft.com/en-us/azure/foundry-local/get-started[/]");
     }
 }
