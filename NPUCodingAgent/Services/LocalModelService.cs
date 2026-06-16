@@ -74,10 +74,13 @@ public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncD
             Console.WriteLine($"{ep.Name} — registered: {ep.IsRegistered}");
         }
 
-        // Download and register OpenVINOExecutionProvider
-        Console.WriteLine($"Registering execution providers... ");
-        var result = await foundryLocalManager.DownloadAndRegisterEpsAsync();
-        Console.WriteLine($"Status: {result.Status}");
+        // Download and register execution providers
+        await AnsiConsole.Status()
+            .StartAsync("[cyan]Registering execution providers...[/]", async ctx =>
+            {
+                var result = await foundryLocalManager.DownloadAndRegisterEpsAsync();
+                AnsiConsole.MarkupLine($"[green]✓[/] Execution providers registered: {result.Status}");
+            });
 
         _catalog = await foundryLocalManager.GetCatalogAsync() ?? throw new InvalidOperationException("Foundry Local did not provide a model catalog.");
         var cachedModels = await _catalog.GetCachedModelsAsync();
@@ -106,30 +109,34 @@ public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncD
             });
         AnsiConsole.MarkupLine("[green]✓[/] Model downloaded successfully");
         
-        try
-        {
-            AnsiConsole.MarkupLine("[cyan]Loading model...[/]");
-            await _model.LoadAsync();
-            AnsiConsole.MarkupLine("[green]✓[/] Model loaded");
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"[red]✗ Failed to load model: {ex.Message}[/]");
-        }
+        await AnsiConsole.Status()
+            .StartAsync("[cyan]Loading model...[/]", async ctx =>
+            {
+                await _model.LoadAsync();
+            });
+        AnsiConsole.MarkupLine("[green]✓[/] Model loaded");
 
-         _chatClient = await _model.GetChatClientAsync() ?? throw new InvalidOperationException("Foundry Local did not provide a chat client for the selected model.");
+         _chatClient = await _model.GetChatClientAsync() ?? throw new InvalidOperationException("Foundry Local did not provide a chat client for the selected model");
 
         _runtimeInfo = ReadRuntimeInfo(_model, _modelAlias, _modelId, _endpoint);
 
-        try
-        {
-            await foundryLocalManager.StartWebServiceAsync();
-            _endpoint = GetManagerEndpoint(foundryLocalManager);
-        }
-        catch
-        {
-            _endpoint = null;
-        }
+        await AnsiConsole.Status()
+            .StartAsync("[cyan]Starting web service...[/]", async ctx =>
+            {
+                try
+                {
+                    await foundryLocalManager.StartWebServiceAsync();
+                    _endpoint = GetManagerEndpoint(foundryLocalManager);
+                    if (_endpoint is not null)
+                    {
+                        AnsiConsole.MarkupLine($"[green]✓[/] Web service started at {_endpoint}");
+                    }
+                }
+                catch
+                {
+                    _endpoint = null;
+                }
+            });
 
         _runtimeInfo = ReadRuntimeInfo(_model, _modelAlias, _modelId, _endpoint);
 

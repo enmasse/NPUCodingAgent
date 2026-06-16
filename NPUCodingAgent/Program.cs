@@ -119,7 +119,12 @@ class Program
                 {
                     try
                     {
-                        var status = await modelService.GetStatusAsync();
+                        var status = string.Empty;
+                        await AnsiConsole.Status()
+                            .StartAsync("[cyan]Fetching model status...[/]", async ctx =>
+                            {
+                                status = await modelService.GetStatusAsync();
+                            });
                         var statusPanel = new Panel(status)
                         {
                             Header = new PanelHeader("[cyan]Model Status[/]"),
@@ -140,7 +145,12 @@ class Program
                 {
                     try
                     {
-                        var pingResponse = await modelService.PingAsync();
+                        var pingResponse = string.Empty;
+                        await AnsiConsole.Status()
+                            .StartAsync("[cyan]Pinging model...[/]", async ctx =>
+                            {
+                                pingResponse = await modelService.PingAsync();
+                            });
                         AnsiConsole.MarkupLine($"\n[green]✓ Ping response:[/] {pingResponse}");
                     }
                     catch (Exception ex)
@@ -169,8 +179,11 @@ class Program
                     var nextModelService = new LocalModelService(modelSelection);
                     try
                     {
-                        AnsiConsole.MarkupLine($"\n[cyan]Switching to '[yellow]{modelSelection}[/]'...[/]");
-                        await nextModelService.InitializeAsync();
+                        await AnsiConsole.Status()
+                            .StartAsync($"[cyan]Switching to '[yellow]{modelSelection}[/]'...[/]", async ctx =>
+                            {
+                                await nextModelService.InitializeAsync();
+                            });
                         var runtimeInfo = await nextModelService.GetRuntimeInfoAsync();
                         modelService.Dispose();
                         modelService = nextModelService;
@@ -211,7 +224,12 @@ class Program
 
                     try
                     {
-                        var response = await modelService.GetResponseAsync(chatHistory);
+                        var response = string.Empty;
+                        await AnsiConsole.Status()
+                            .StartAsync("[cyan]Generating edits...[/]", async ctx =>
+                            {
+                                response = await modelService.GetResponseAsync(chatHistory);
+                            });
                         chatHistory.Add(new ChatMessage("assistant", response));
                         PrintEditPreview(currentContent, response);
 
@@ -245,7 +263,12 @@ class Program
 
                 try
                 {
-                    var response = await modelService.GetResponseAsync(chatHistory);
+                    string response = string.Empty;
+                    await AnsiConsole.Status()
+                        .StartAsync("[cyan]Thinking...[/]", async ctx =>
+                        {
+                            response = await modelService.GetResponseAsync(chatHistory);
+                        });
                     chatHistory.Add(new ChatMessage("assistant", response));
                     AnsiConsole.MarkupLine($"\n[cyan]Assistant:[/] {response}");
                 }
@@ -278,7 +301,13 @@ class Program
     {
         try
         {
-            var models = await modelService.ListAvailableModelsAsync();
+            IReadOnlyList<string> models = [];
+            await AnsiConsole.Status()
+                .StartAsync("[cyan]Loading available models...[/]", async ctx =>
+                {
+                    models = await modelService.ListAvailableModelsAsync();
+                });
+
             if (models.Count == 0)
             {
                 AnsiConsole.MarkupLine("\n[yellow]Foundry Local did not report any selectable models.[/]");
