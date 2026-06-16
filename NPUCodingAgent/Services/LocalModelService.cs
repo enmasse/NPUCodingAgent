@@ -71,7 +71,7 @@ public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncD
         var eps = foundryLocalManager.DiscoverEps();
         foreach (var ep in eps)
         {
-            Console.WriteLine($"{ep.Name} — registered: {ep.IsRegistered}");
+            AnsiConsole.MarkupLine($"{ep.Name} — registered: {ep.IsRegistered}");
         }
 
         // Download and register execution providers
@@ -90,33 +90,44 @@ public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncD
 
         _modelId = _model?.Id;
 
-        await AnsiConsole.Progress()
-            .Columns(
-                new ProgressColumn[]
-                {
-                    new TaskDescriptionColumn(),
+        // If the model is not cached, download it with a progress bar else just load it
+        if (cachedModels is not null && cachedModels.Any(m => string.Equals(m.Id, _modelId, StringComparison.OrdinalIgnoreCase)))
+        {
+            AnsiConsole.MarkupLine($"[green]✓[/] Model '{_modelId}' is already cached locally");
+        }
+        else
+        {
+            AnsiConsole.MarkupLine($"[yellow]![/] Model '{_modelId}' is not cached locally and will be downloaded");
+
+            await AnsiConsole.Progress()
+                .Columns(
+                    [
+                        new TaskDescriptionColumn(),
                     new ProgressBarColumn(),
                     new PercentageColumn(),
                     new RemainingTimeColumn()
-                })
-            .StartAsync(async ctx =>
-            {
-                var task = ctx.AddTask("[cyan]Downloading model[/]");
-                await _model.DownloadAsync((p) =>
+                    ])
+                .StartAsync(async ctx =>
                 {
-                    task.Value = p;
+                    var task = ctx.AddTask("[cyan]Downloading model[/]");
+                    await _model.DownloadAsync((p) =>
+                    {
+                        task.Value = p;
+                    });
                 });
-            });
-        AnsiConsole.MarkupLine("[green]✓[/] Model downloaded successfully");
-        
+            AnsiConsole.MarkupLine("[green]✓[/] Model downloaded successfully");
+        }
+
         await AnsiConsole.Status()
+            .Spinner(Spinner.Known.Dots)
+            .SpinnerStyle(Style.Parse("cyan"))
             .StartAsync("[cyan]Loading model...[/]", async ctx =>
             {
                 await _model.LoadAsync();
             });
         AnsiConsole.MarkupLine("[green]✓[/] Model loaded");
 
-         _chatClient = await _model.GetChatClientAsync() ?? throw new InvalidOperationException("Foundry Local did not provide a chat client for the selected model");
+        _chatClient = await _model.GetChatClientAsync() ?? throw new InvalidOperationException("Foundry Local did not provide a chat client for the selected model");
 
         _runtimeInfo = ReadRuntimeInfo(_model, _modelAlias, _modelId, _endpoint);
 

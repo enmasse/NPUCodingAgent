@@ -8,13 +8,13 @@ class Program
 {
     static async Task Main(string[] args)
     {
-        var panel = new Panel("[bold cyan]NPU Coding Agent MVP (v1.0)[/]")
-        {
-            Border = BoxBorder.Rounded,
-            Expand = false,
-            Padding = new Padding(1, 1)
-        };
-        AnsiConsole.Write(panel);
+        AnsiConsole.Write(
+            new FigletText("NPU Agent")
+            {
+                Justification = Justify.Center,
+                Color = new Color(0, 255, 255)
+            });
+        AnsiConsole.MarkupLine("[dim center]MVP (v1.0)[/]");
         AnsiConsole.WriteLine();
 
         AnsiConsole.MarkupLine($"[dim]Workspace:[/] {Environment.CurrentDirectory}");
