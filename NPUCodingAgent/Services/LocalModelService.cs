@@ -2,6 +2,7 @@ using Betalgo.Ranul.OpenAI.ObjectModels.RequestModels;
 using Betalgo.Ranul.OpenAI.ObjectModels.ResponseModels;
 using Microsoft.AI.Foundry.Local;
 using Microsoft.Extensions.Logging;
+using Spectre.Console;
 using System.Collections;
 using System.Runtime.CompilerServices;
 
@@ -12,7 +13,7 @@ namespace NPUCodingAgent.Services;
 public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncDisposable
 {
     public const string SystemPrompt = "You are a helpful coding assistant. Provide clear, concise answers about code and programming.";
-    
+
     private const string DefaultModelAlias = "phi-3-mini-4k";
 
     private readonly string _modelAlias = string.IsNullOrWhiteSpace(modelAlias)
@@ -67,16 +68,13 @@ public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncD
 
         foundryLocalManager = FoundryLocalManager.Instance;
 
-        var eps = foundryLocalManager.DiscoverEps();
-        foreach (var ep in eps)
-        {
-            Console.WriteLine($"{ep.Name} — registered: {ep.IsRegistered}");
-        }
-
-        // Download and register OpenVINOExecutionProvider
-        Console.WriteLine($"Registering execution providers... ");
-        var result = await foundryLocalManager.DownloadAndRegisterEpsAsync();
-        Console.WriteLine($"Status: {result.Status}");
+        // Download and register execution providers
+        await AnsiConsole.Status()
+            .StartAsync("[cyan]Registering execution providers...[/]", async ctx =>
+            {
+                var result = await foundryLocalManager.DownloadAndRegisterEpsAsync();
+                AnsiConsole.MarkupLine($"[green]✓[/] Execution providers registered: {result.Status}");
+            });
 
         _catalog = await foundryLocalManager.GetCatalogAsync() ?? throw new InvalidOperationException("Foundry Local did not provide a model catalog.");
         var cachedModels = await _catalog.GetCachedModelsAsync();
@@ -86,31 +84,64 @@ public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncD
 
         _modelId = _model?.Id;
 
-        await _model.DownloadAsync((p) => Console.WriteLine($"Download progress: {p}%"));
-        try
+        // If the model is not cached, download it with a progress bar else just load it
+        if (cachedModels is not null && cachedModels.Any(m => string.Equals(m.Id, _modelId, StringComparison.OrdinalIgnoreCase)))
         {
-            Console.WriteLine("Loading model...");
-            await _model.LoadAsync();
-            Console.WriteLine("Model loaded.");
+            AnsiConsole.MarkupLine($"[green]✓[/] Model '{_modelId}' is cached locally");
         }
-        catch (Exception ex)
+        else
         {
-            Console.WriteLine(ex.Message);
+            AnsiConsole.MarkupLine($"[yellow]![/] Model '{_modelId}' is not cached locally and will be downloaded");
+
+            await AnsiConsole.Progress()
+                .Columns(
+                    [
+                        new TaskDescriptionColumn(),
+                    new ProgressBarColumn(),
+                    new PercentageColumn(),
+                    new RemainingTimeColumn()
+                    ])
+                .StartAsync(async ctx =>
+                {
+                    var task = ctx.AddTask("[cyan]Downloading model[/]");
+                    await _model.DownloadAsync((p) =>
+                    {
+                        task.Value = p;
+                    });
+                });
+            AnsiConsole.MarkupLine("[green]✓[/] Model downloaded successfully");
         }
 
-         _chatClient = await _model.GetChatClientAsync() ?? throw new InvalidOperationException("Foundry Local did not provide a chat client for the selected model.");
+        await AnsiConsole.Status()
+            .Spinner(Spinner.Known.Pong)
+            .SpinnerStyle(Style.Parse("cyan"))
+            .StartAsync("[cyan]Loading model...[/]", async ctx =>
+            {
+                await _model.LoadAsync();
+            });
+        AnsiConsole.MarkupLine("[green]✓[/] Model loaded");
+
+        _chatClient = await _model.GetChatClientAsync() ?? throw new InvalidOperationException("Foundry Local did not provide a chat client for the selected model");
 
         _runtimeInfo = ReadRuntimeInfo(_model, _modelAlias, _modelId, _endpoint);
 
-        try
-        {
-            await foundryLocalManager.StartWebServiceAsync();
-            _endpoint = GetManagerEndpoint(foundryLocalManager);
-        }
-        catch
-        {
-            _endpoint = null;
-        }
+        await AnsiConsole.Status()
+            .StartAsync("[cyan]Starting web service...[/]", async ctx =>
+            {
+                try
+                {
+                    await foundryLocalManager.StartWebServiceAsync();
+                    _endpoint = GetManagerEndpoint(foundryLocalManager);
+                    if (_endpoint is not null)
+                    {
+                        AnsiConsole.MarkupLine($"[green]✓[/] Web service started at {_endpoint}");
+                    }
+                }
+                catch
+                {
+                    _endpoint = null;
+                }
+            });
 
         _runtimeInfo = ReadRuntimeInfo(_model, _modelAlias, _modelId, _endpoint);
 
@@ -220,6 +251,18 @@ public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncD
         }
 
         return string.Empty;
+    }
+
+    private static FoundryLocalManager? TryGetExistingManager()
+    {
+        try
+        {
+            return FoundryLocalManager.Instance;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
     }
 
     private static ModelRuntimeInfo ReadRuntimeInfo(IModel? model, string modelAlias, string? modelId, Uri? endpoint)
@@ -364,7 +407,7 @@ public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncD
 
     protected void Dispose(bool disposing)
     {
-        FoundryLocalManager.Instance.Dispose();
+        //FoundryLocalManager.Instance.Dispose();
 
         if (disposing)
         {
@@ -402,6 +445,8 @@ public class LocalModelService(string? modelAlias = null) : IDisposable, IAsyncD
         catch
         {
         }
+
+        GC.SuppressFinalize(this);
     }
 
     protected virtual async ValueTask DisposeAsyncCore()
