@@ -22,6 +22,12 @@ This repository includes two applications:
 - 📊 **Pairwise similarity analysis** with cosine similarity metrics
 - 📐 **Vector angle computation** in both radians and degrees
 - 🎯 **Multi-sentence comparison** for semantic relationship exploration
+- 🧠 **Hierarchical embedding decoder** with LSH-based token voting (experimental)
+  - Decodes global embeddings into sequences of smaller sub-embeddings
+  - Static multi-table token lookup using 16 LSH tables
+  - Vote-based token selection with harmonic-mean aggregation
+  - CPU-first performance focus with deterministic random projections
+  - Full snapshot export for particle-filter experiments
 
 ## Prerequisites
 
@@ -129,7 +135,23 @@ Assistant: The LocalModelService is responsible for...
 
 ### Embeddings Explorer Usage
 
-The embeddings explorer accepts 2 or more sentences either from command-line arguments or interactive prompts. It generates embeddings using the configured model (default: `qwen3-embedding-0.6b`) and displays pairwise comparisons.
+The embeddings explorer now offers two workflows:
+1. **Pairwise Embedding Comparison** (original functionality)
+2. **Hierarchical Decoder with LSH Token Voting** (experimental)
+
+Both workflows generate embeddings using the configured model (default: `qwen3-embedding-0.6b`).
+
+#### Workflow Selection
+
+When you run the embeddings explorer without command-line arguments, you'll be prompted to choose a workflow:
+
+```bash
+dotnet run --project NPUCodingAgent.Embeddings
+```
+
+#### Pairwise Comparison Workflow
+
+Accepts 2 or more sentences and displays pairwise similarity comparisons.
 
 #### Command-line Arguments
 ```bash
@@ -164,6 +186,46 @@ Then enter sentences one per line, press Enter on empty line when done (minimum 
 - **Angle (Radians)**: The angle between vectors in radians (0 to π).
 - **Angle (Degrees)**: The angle in degrees (0° to 180°). Smaller angles indicate higher similarity.
 
+#### Hierarchical Decoder Workflow (Experimental)
+
+This workflow demonstrates a CPU-first hierarchical embedding decoder with LSH-based token voting:
+
+1. **Input**: Enter a sentence to generate a global embedding
+2. **Expansion**: The global embedding is expanded into a configurable sequence of smaller sub-embeddings
+3. **Token Lookup**: Each sub-embedding is decoded to a token using 16 LSH hash tables
+4. **Voting**: Tokens are selected by multi-table voting with harmonic-mean tie-breaking
+5. **Output**: Displays the decoded token sequence and reconstructed text
+
+**Example Output:**
+```
+┌─ Decoded Token Sequence ────────────────────────────────────────┐
+│ Step  Token    Votes  Harmonic Score  Cosine Similarity         │
+├──────────────────────────────────────────────────────────────────┤
+│ 1     hello    12     0.8234          0.8567                     │
+│ 2     world    14     0.8901          0.9123                     │
+│ 3     test     10     0.7654          0.8012                     │
+│ 4     example  11     0.7892          0.8234                     │
+└──────────────────────────────────────────────────────────────────┘
+
+┌─ Reconstructed Text ─────────────────────────────────────────────┐
+│ hello world test example                                         │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**Key Features:**
+- **16 LSH tables** for robust candidate retrieval
+- **Harmonic-mean aggregation** ensures candidates must perform consistently across tables
+- **Deterministic behavior** from seeded random projections
+- **CPU-optimized** with compact array-backed storage and bit-packed signatures
+- **Snapshot export** provides access to projection parameters, token prototypes, and vote evidence for particle-filter experiments
+
+**Configuration:**
+- Sub-embedding count: Configurable (default: 8)
+- Sub-embedding dimension: Matches global embedding dimension
+- LSH tables: 16 (fixed)
+- Bits per table: 12 (configurable)
+- Top candidates per table: 3 (configurable)
+
 ## Architecture
 
 ```
@@ -176,12 +238,19 @@ NPUCodingAgent/
 │   │   └── FileEditService.cs         # Safe file writing with backups
 │   └── NPUCodingAgent.csproj
 ├── NPUCodingAgent.Embeddings/
-│   ├── Program.cs                      # Embeddings explorer entry point
+│   ├── Program.cs                      # Embeddings explorer entry point (pairwise + decoder)
 │   ├── VectorMath.cs                   # Cosine similarity and angle calculations
+│   ├── DecoderModels.cs                # Hierarchical decoder contracts and types
+│   ├── LshPrimitives.cs                # Random hyperplane LSH and vote aggregation
+│   ├── StaticProjectionLookup.cs       # Multi-table token voting layer
+│   ├── SequenceExpansionLayer.cs       # Global-to-sub-embedding expansion
+│   ├── DecoderDiagnostics.cs           # Snapshot export and analysis utilities
 │   └── NPUCodingAgent.Embeddings.csproj
 └── NPUCodingAgent.Tests/
     ├── LocalModelServiceSelectionTests.cs     # Model selection unit tests
     ├── LocalModelServiceIntegrationTests.cs   # Chat integration tests
+    ├── LshDecoderUnitTests.cs                 # LSH decoder unit tests
+    ├── LshDecoderIntegrationTests.cs          # Decoder end-to-end integration tests
     ├── VectorMathTests.cs                     # Vector math unit tests
     └── EmbeddingsIntegrationTests.cs          # Embeddings integration tests
 ```
@@ -193,7 +262,10 @@ NPUCodingAgent/
 - **WorkspaceService**: Safely enumerates and reads files with extension filtering and size limits (chat agent only)
 - **FileEditService**: Handles file modifications with automatic backup creation (chat agent only)
 - **Program (NPUCodingAgent)**: Orchestrates the interactive chat loop and command dispatching
-- **Program (NPUCodingAgent.Embeddings)**: Handles embeddings workflow with pairwise comparisons
+- **Program (NPUCodingAgent.Embeddings)**: Handles embeddings workflow with pairwise comparisons and hierarchical decoder
+- **StaticProjectionLookup**: Multi-table LSH token voting layer with 16 deterministic hash tables
+- **SequenceExpansionLayer**: Expands global embeddings into sub-embedding sequences for hierarchical decoding
+- **DecoderDiagnostics**: Snapshot export and analysis utilities for particle-filter experiments
 
 ## Configuration
 
