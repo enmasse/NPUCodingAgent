@@ -2,8 +2,13 @@
 
 A minimal coding assistant that uses Foundry Local to start a local model and run locally on the device NPU, either through its local web endpoint or the in-process SDK client.
 
+This repository includes two applications:
+- **NPUCodingAgent**: Interactive coding assistant with chat, file workspace operations, and AI-powered editing
+- **NPUCodingAgent.Embeddings**: Text embedding explorer for semantic similarity analysis
+
 ## Features
 
+### Coding Agent (NPUCodingAgent)
 - 🤖 **Local AI inference** through Foundry Local with web-endpoint or in-process SDK execution
 - 📡 **Smoke verification** with a quick ping command
 - 🧠 **Best-effort NPU detection** from Foundry Local runtime metadata
@@ -11,6 +16,12 @@ A minimal coding assistant that uses Foundry Local to start a local model and ru
 - 📁 **Workspace awareness** - list and read project files
 - ✏️ **AI-assisted editing** - modify files with confirmation and automatic backups
 - 🔒 **Safe operations** - file size limits, path validation, backup creation
+
+### Embeddings Explorer (NPUCodingAgent.Embeddings)
+- 🔢 **Text embedding generation** using qwen3-embedding-0.6b on NPU
+- 📊 **Pairwise similarity analysis** with cosine similarity metrics
+- 📐 **Vector angle computation** in both radians and degrees
+- 🎯 **Multi-sentence comparison** for semantic relationship exploration
 
 ## Prerequisites
 
@@ -29,12 +40,19 @@ The app uses the documented Windows packages:
 
 ### 2. Choose a model alias
 
+#### For Coding Agent (NPUCodingAgent)
 Optionally set this environment variable before running:
 - `FOUNDRY_LOCAL_MODEL=phi-3-mini-128k-instruct-qnn-npu:4`
 
-By default the app uses `phi-3-mini-128k-instruct-qnn-npu:4`.
+By default the app uses `phi-3-mini-4k`.
 
 You can also inspect the local Foundry catalog at runtime with `/models` and switch to any selectable alias or variant ID with `/use <model>`.
+
+#### For Embeddings Explorer (NPUCodingAgent.Embeddings)
+Optionally set this environment variable before running:
+- `FOUNDRY_LOCAL_EMBEDDING_MODEL=qwen3-embedding-0.6b`
+
+By default the embeddings app uses `qwen3-embedding-0.6b`.
 
 ### 3. Run the app
 
@@ -42,14 +60,26 @@ On first run, Foundry Local can download execution providers, start the model, a
 
 ### 4. Build and Run
 
+#### Coding Agent
 ```bash
 dotnet build
 dotnet run --project NPUCodingAgent
 ```
 
+#### Embeddings Explorer
+```bash
+dotnet build
+dotnet run --project NPUCodingAgent.Embeddings
+```
+
+Or run with command-line arguments:
+```bash
+dotnet run --project NPUCodingAgent.Embeddings -- "The quick brown fox" "A fast auburn canine" "The weather is sunny"
+```
+
 ## Usage
 
-### Commands
+### Coding Agent Commands
 
 | Command | Description |
 |---------|-------------|
@@ -64,7 +94,7 @@ dotnet run --project NPUCodingAgent
 | `help` | Show help message |
 | `exit` | Exit the application |
 
-### Example Workflow
+### Coding Agent Example Workflow
 
 ```
 > /list
@@ -97,24 +127,73 @@ Apply these changes? (yes/no): yes
 Assistant: The LocalModelService is responsible for...
 ```
 
+### Embeddings Explorer Usage
+
+The embeddings explorer accepts 2 or more sentences either from command-line arguments or interactive prompts. It generates embeddings using the configured model (default: `qwen3-embedding-0.6b`) and displays pairwise comparisons.
+
+#### Command-line Arguments
+```bash
+dotnet run --project NPUCodingAgent.Embeddings -- "The cat sits on the mat" "A feline rests on the rug" "The weather is sunny"
+```
+
+#### Interactive Mode
+```bash
+dotnet run --project NPUCodingAgent.Embeddings
+```
+Then enter sentences one per line, press Enter on empty line when done (minimum 2 sentences required).
+
+#### Example Output
+```
+┌─ Pairwise Embedding Comparisons ───────────────────────────────────────┐
+│ Pair    Cosine Similarity  Angle (Radians)  Angle (Degrees) │
+├─────────────────────────────────────────────────────────────┤
+│ 1 ↔ 2   0.912456          0.415827         23.82°          │
+│ 1 ↔ 3   0.654321          0.858963         49.21°          │
+│ 2 ↔ 3   0.631245          0.896354         51.34°          │
+└─────────────────────────────────────────────────────────────┘
+
+┌─ Input Sentences ───────────────────────────────────────────┐
+│ 1. The cat sits on the mat                                  │
+│ 2. A feline rests on the rug                                │
+│ 3. The weather is sunny                                     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Interpreting Results:**
+- **Cosine Similarity**: Ranges from -1 (opposite) to 1 (identical). Higher values indicate more semantic similarity.
+- **Angle (Radians)**: The angle between vectors in radians (0 to π).
+- **Angle (Degrees)**: The angle in degrees (0° to 180°). Smaller angles indicate higher similarity.
+
 ## Architecture
 
 ```
 NPUCodingAgent/
-├── Program.cs                      # Entry point and command loop
-├── Services/
-│   ├── LocalModelService.cs       # Foundry Local SDK integration
-│   ├── WorkspaceService.cs        # File discovery and reading
-│   └── FileEditService.cs         # Safe file writing with backups
-└── NPUCodingAgent.csproj          # Project configuration
+├── NPUCodingAgent/
+│   ├── Program.cs                      # Chat agent entry point
+│   ├── Services/
+│   │   ├── LocalModelService.cs       # Foundry Local SDK integration (chat & embeddings)
+│   │   ├── WorkspaceService.cs        # File discovery and reading
+│   │   └── FileEditService.cs         # Safe file writing with backups
+│   └── NPUCodingAgent.csproj
+├── NPUCodingAgent.Embeddings/
+│   ├── Program.cs                      # Embeddings explorer entry point
+│   ├── VectorMath.cs                   # Cosine similarity and angle calculations
+│   └── NPUCodingAgent.Embeddings.csproj
+└── NPUCodingAgent.Tests/
+    ├── LocalModelServiceSelectionTests.cs     # Model selection unit tests
+    ├── LocalModelServiceIntegrationTests.cs   # Chat integration tests
+    ├── VectorMathTests.cs                     # Vector math unit tests
+    └── EmbeddingsIntegrationTests.cs          # Embeddings integration tests
 ```
 
 ### Key Components
 
-- **LocalModelService**: Starts Foundry Local, enumerates selectable aliases and variant IDs from the catalog, loads the selected model, surfaces runtime metadata, and talks to the local model through the SDK runtime
-- **WorkspaceService**: Safely enumerates and reads files with extension filtering and size limits
-- **FileEditService**: Handles file modifications with automatic backup creation
-- **Program**: Orchestrates the interactive loop and command dispatching
+- **LocalModelService**: Starts Foundry Local, supports both chat and embedding models, enumerates selectable aliases and variant IDs from the catalog, loads the selected model, surfaces runtime metadata, and talks to the local model through the SDK runtime or web endpoint
+- **VectorMath**: Implements cosine similarity and vector angle calculations with proper validation and floating-point clamping
+- **WorkspaceService**: Safely enumerates and reads files with extension filtering and size limits (chat agent only)
+- **FileEditService**: Handles file modifications with automatic backup creation (chat agent only)
+- **Program (NPUCodingAgent)**: Orchestrates the interactive chat loop and command dispatching
+- **Program (NPUCodingAgent.Embeddings)**: Handles embeddings workflow with pairwise comparisons
 
 ## Configuration
 

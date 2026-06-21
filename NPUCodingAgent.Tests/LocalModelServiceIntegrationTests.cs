@@ -11,7 +11,8 @@ public sealed class LocalModelServiceIntegrationTests
     [Fact]
     public async Task ListAvailableModelsAsync_ReturnsModels()
     {
-        using var service = new LocalModelService();
+        await using var service = new LocalModelService();
+        await service.InitializeAsync();
 
         var models = await service.ListAvailableModelsAsync();
 
@@ -21,7 +22,8 @@ public sealed class LocalModelServiceIntegrationTests
     [Fact]
     public async Task GetStatusAsync_ReturnsReadyStatus()
     {
-        using var service = new LocalModelService();
+        await using var service = new LocalModelService();
+        await service.InitializeAsync();
 
         var status = await service.GetStatusAsync();
 
@@ -34,7 +36,8 @@ public sealed class LocalModelServiceIntegrationTests
     [Fact]
     public async Task GetResponseAsync_ReturnsNonEmptyResponse()
     {
-        using var service = new LocalModelService();
+        await using var service = new LocalModelService();
+        await service.InitializeAsync();
 
         var response = await service.GetResponseAsync(
         [
